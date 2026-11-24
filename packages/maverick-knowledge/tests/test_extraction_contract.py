@@ -295,3 +295,67 @@ def test_a_hyperlink_is_read_and_other_outside_targets_are_refused(tmp_path):
     assert extract_document(template).status == "rejected"
     with pytest.raises(ValueError, match="external links"):
         word_document_tables(template.read_bytes())
+
+
+def test_a_table_inside_a_field_result_or_beside_embedded_content_is_refused(tmp_path):
+    # Review: an INCLUDETEXT field beginning in a paragraph and ending after
+    # a table made the table its cached result, yet the table reader read it;
+    # and an embedded document anywhere hides its own tables.
+    docx = pytest.importorskip("docx")
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    from maverick_knowledge.parse import word_document_tables
+
+    def field_char(kind):
+        run, char = OxmlElement("w:r"), OxmlElement("w:fldChar")
+        char.set(qn("w:fldCharType"), kind)
+        run.append(char)
+        return run
+
+    path = tmp_path / "included.docx"
+    document = docx.Document()
+    document.add_paragraph("Rent")._p.append(field_char("begin"))
+    table = document.add_table(rows=1, cols=2)
+    table.cell(0, 0).text, table.cell(0, 1).text = "Year 1", "4200.00"
+    document.add_paragraph("")._p.append(field_char("end"))
+    document.save(path)
+    with pytest.raises(ValueError, match="reviewed text copy"):
+        word_document_tables(path.read_bytes())
+
+    embedded = tmp_path / "embedded.docx"
+    document = docx.Document()
+    document.element.body.insert(0, OxmlElement("w:altChunk"))
+    document.add_table(rows=1, cols=1).cell(0, 0).text = "x"
+    document.save(embedded)
+    with pytest.raises(ValueError, match="reviewed text copy"):
+        word_document_tables(embedded.read_bytes())
+
+
+def test_only_the_hyperlink_relationship_type_is_allowed_outside(tmp_path):
+    # Review: any Type ending in /relationships/hyperlink was trusted.
+    docx = pytest.importorskip("docx")
+    path = tmp_path / "spoof.docx"
+    document = docx.Document()
+    document.part.relate_to("https://evil.example.com/t.dotm", "http://evil.example/relationships/hyperlink",
+                            is_external=True)
+    document.add_paragraph("x")
+    document.save(path)
+    assert extract_document(path).status == "rejected"
+
+
+def test_deeply_nested_tables_are_checked_in_linear_time(tmp_path):
+    # Review: each nested table re-walked everything below it.
+    import time
+
+    docx = pytest.importorskip("docx")
+    from maverick_knowledge.parse import word_document_tables
+
+    path = tmp_path / "nested.docx"
+    document = docx.Document()
+    cell = document.add_table(rows=1, cols=1).cell(0, 0)
+    for _depth in range(150):
+        cell = cell.add_table(rows=1, cols=1).cell(0, 0)
+    document.save(path)
+    started = time.monotonic()
+    word_document_tables(path.read_bytes())
+    assert time.monotonic() - started < 2

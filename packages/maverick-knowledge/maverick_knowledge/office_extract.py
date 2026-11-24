@@ -15,6 +15,13 @@ S = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 
 
+# The relationship type of a hyperlink, in transitional and strict Office XML.
+_HYPERLINK_TYPES = frozenset({
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+    "http://purl.oclc.org/ooxml/officeDocument/relationships/hyperlink",
+})
+
+
 def _parts(data: bytes, max_expanded: int) -> dict:
     parts = {}
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
@@ -51,7 +58,7 @@ def _parts(data: bytes, max_expanded: int) -> dict:
                 if folded.endswith(".rels") and any(
                     (rel.get("TargetMode", "").lower() == "external"
                      or re.match(r"(?:[A-Za-z][A-Za-z0-9+.-]*:|//|\\\\)", rel.get("Target", "")))
-                    and not rel.get("Type", "").endswith("/relationships/hyperlink")
+                    and rel.get("Type", "") not in _HYPERLINK_TYPES
                     for rel in node
                 ):
                     raise ValueError("Office external links require a reviewed text copy")
@@ -121,6 +128,9 @@ _REFUSED = frozenset(W + name for name in ("altChunk", "object", "instrText", "f
 # which a reading of the text can carry: pandoc and docx libraries write
 # "Table 1" captions this way.
 _REFUSED_IN_TABLES_ONLY = frozenset({W + "fldSimple"})
+# An embedded document or object hides its own tables from the reader, so it
+# refuses the table reader wherever it sits.
+_REFUSED_EVERYWHERE = frozenset({W + "altChunk", W + "object"})
 
 
 def _word_body(parts, everywhere: bool = True):
@@ -132,10 +142,22 @@ def _word_body(parts, everywhere: bool = True):
     root = parts.get("word/document.xml")
     if root is None or root.tag != W + "document":
         raise ValueError("Word document body is missing")
-    tables = [node for node in root.iter() if node.tag == W + "tbl"]
-    in_tables = {id(node) for table in tables for node in table.iter()}
+    # Each node inside a table, in one pass: a nested table's nodes are in its
+    # parent's already, so walking every table again was quadratic in depth.
+    in_tables: set[int] = set()
+    for table in root.iter(W + "tbl"):
+        if id(table) not in in_tables:
+            in_tables.update(id(node) for node in table.iter())
+    # A complex field open around a table (INCLUDETEXT, DATABASE) makes the
+    # table its cached result, though the field starts outside it.
+    open_fields = 0
     for node in root.iter():
-        if node.tag in _REFUSED and (id(node) in in_tables
+        if node.tag == W + "fldChar":
+            kind = node.get(W + "fldCharType")
+            open_fields = open_fields + 1 if kind == "begin" else max(0, open_fields - 1) if kind == "end" else open_fields
+        elif node.tag == W + "tbl" and open_fields:
+            raise ValueError("Word fields, embedded content and tracked changes need a reviewed text copy")
+        if node.tag in _REFUSED and (id(node) in in_tables or node.tag in _REFUSED_EVERYWHERE
                                      or (everywhere and node.tag not in _REFUSED_IN_TABLES_ONLY)):
             raise ValueError("Word fields, embedded content and tracked changes need a reviewed text copy")
     body = root.find(W + "body")
