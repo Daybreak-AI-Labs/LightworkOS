@@ -112,10 +112,12 @@ def query_tables(tables: dict[str, tuple[str, str]], sql: str) -> str:
     db.create_function("hours", 2, _hours, deterministic=True)
     db.create_function("overlap", 4, _overlap, deterministic=True)
     try:
+        headers: dict[str, list[str]] = {}
         for name, (filename, text) in tables.items():
             problem = _load(db, name, filename, text)
             if problem:
                 return problem
+            headers[name] = [row[1] for row in db.execute(f'PRAGMA table_info("{name}")')]
         allowed = {sqlite3.SQLITE_SELECT, sqlite3.SQLITE_READ, sqlite3.SQLITE_FUNCTION}
         names = set(tables)
 
@@ -132,7 +134,13 @@ def query_tables(tables: dict[str, tuple[str, str]], sql: str) -> str:
         try:
             cursor = db.execute(sql)
         except (sqlite3.Error, sqlite3.Warning) as exc:
-            return f"ERROR: the query was refused or invalid: {exc}"
+            known = ""
+            if "no such column" in str(exc):
+                # Live: told only "no such column: amount", an agent gave up on
+                # the query and added a statement's figures by hand.
+                known = "".join(f"; {table} has the columns {', '.join(columns)}"
+                                for table, columns in headers.items())
+            return f"ERROR: the query was refused or invalid: {exc}{known}"
         columns = [d[0] for d in cursor.description or ()]
         found = cursor.fetchmany(MAX_QUERY_ROWS + 1)
     finally:

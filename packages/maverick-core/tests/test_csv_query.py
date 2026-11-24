@@ -68,3 +68,12 @@ def test_a_blank_in_a_column_of_numbers_is_null_and_a_blank_in_text_stays_blank(
     assert _query(text, "SELECT MAX(withdrawal) AS w, AVG(withdrawal) AS a, COUNT(deposit) AS d FROM data") == [
         "w,a,d", "4249.27,4001.24,1"]
     assert _query(text, "SELECT COUNT(*) AS n FROM data WHERE receipt = ''") == ["n", "1"]
+
+
+def test_an_unknown_column_error_lists_the_columns():
+    # Live: "no such column: amount" over a statement's Withdrawals and
+    # Deposits; the agent gave up on the query and added figures by hand.
+    out = query_tables({"data": ("s.csv", "Date,Withdrawals,Deposits\n10/03,5.00,\n")},
+                       "SELECT SUM(amount) FROM data")
+    assert out.startswith("ERROR") and "no such column: amount" in out
+    assert "data has the columns Date, Withdrawals, Deposits" in out
