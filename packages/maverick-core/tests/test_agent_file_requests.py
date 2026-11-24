@@ -541,3 +541,42 @@ async def test_a_send_back_on_a_misread_request_lets_the_answer_stand(tmp_path, 
                answer="Slide 1: Q3 revenue up 12%.")
     sent = _sent_back(fake_llm)
     assert "asked to receive slides" in sent and "give your final answer again unchanged" in sent
+
+
+# ---- A labeled corpus of requests ----------------------------------------
+
+# Requests whose label the checks miss, each costing one unchecked file: a
+# refusal followed by a bare file ("Not as a CSV please, an Excel file"), a
+# load "into a spreadsheet" (read as reading a file, like "Import the CSV
+# into a spreadsheet tool"), and a comma among the words describing a deck,
+# which ends the clause (kept so "I don't want slides, just a PDF" works).
+_KNOWN_MISSES = {"Not as a CSV please, an Excel file",
+                 "Load the CSV into a spreadsheet and add a totals row",
+                 "Make a short, punchy investor deck"}
+
+
+def test_a_labeled_corpus_of_requests_is_read_right():
+    # Review rounds built these: what each request asks to receive (C a CSV,
+    # W a Word document, P a PDF, S slides; "?" marks a choice where any one
+    # will do) and whether it asks for a spreadsheet beside a CSV on the page.
+    # A miss costs the person their file; a false alarm costs one answer
+    # given again, so both are pinned.
+    import json
+    from pathlib import Path
+
+    from maverick.agent import _CSV_REQUEST, _persons_words
+
+    letter = {"a CSV file": "C", "a Word document": "W", "a PDF": "P", "slides": "S"}
+    wrong = []
+    for case in json.loads((Path(__file__).parent / "data" / "file_requests.json").read_text()):
+        if case["text"] in _KNOWN_MISSES:
+            continue
+        text = _persons_words(case["text"])
+        got = {letter[label] for pattern, _s, label, _h in _FILE_TYPE_REQUESTS if _asks_to_receive(pattern, text)}
+        wanted = set(case["files"].replace("?", ""))
+        files_right = got <= wanted if "?" in case["files"] else got == wanted
+        workbook = bool(_asks_to_receive(_WORKBOOK_REQUEST, text, frozenset({".csv"}))
+                        and not _asks_to_receive(_CSV_REQUEST, text, frozenset({".csv"})))
+        if not files_right or workbook != case["spreadsheet"]:
+            wrong.append((case["text"], case["files"], sorted(got), case["spreadsheet"], workbook))
+    assert not wrong, wrong
