@@ -587,3 +587,22 @@ def test_a_division_by_zero_is_an_error_not_a_figure(expr):
     from maverick.tools.compute import compute
     out = compute().fn({"op": "evaluate", "expr": expr})
     assert out.startswith("ERROR") and "divides by zero" in out, out
+
+
+@pytest.mark.parametrize("sympy_missing", [False, True])
+def test_sum_and_pow_rewrites_keep_precedence_size_and_digits(monkeypatch, sympy_missing):
+    # Review: beside a date call, sum([1, 2])^2 came back 1 + 2 ** 2 (5, not
+    # 9); a sum of 330 or more items was too deep to print back; and a
+    # decimal of 16 or more digits came back as the float nearest it.
+    import sys as _sys
+    if sympy_missing:
+        monkeypatch.setitem(_sys.modules, "sympy", None)
+    elif not _HAS_SYMPY:
+        pytest.skip("sympy not installed")
+    from maverick.tools.compute import compute
+    run = compute().fn
+    assert float(run({"op": "evaluate", "expr": "sum([1,2])^2 + 0*julianday('2026-01-01')"})) == 9
+    assert float(run({"op": "evaluate", "expr": "sum([julianday('2026-03-01'), -julianday('2026-01-31')])^2"})) == 841
+    if not sympy_missing:  # the fallback reads 1,000 characters at most
+        assert float(run({"op": "evaluate", "expr": "sum([" + ", ".join(["1"] * 1000) + "])"})) == 1000
+        assert run({"op": "evaluate", "expr": "sum([0.12345678901234567890, 1])"}) == "1.1234567890123456789"

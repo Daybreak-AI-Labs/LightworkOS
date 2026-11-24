@@ -303,6 +303,37 @@ _VALID_OPS = {"evaluate", "simplify", "solve", "diff", "integrate"}
 _SUM_CALL = re.compile(r"\bsum\(\s*(?:\[([^\[\]()]*)\]|([^\[\]()]*))\s*\)")
 
 
+def _rewritten(expr: str, transformer: ast.NodeTransformer) -> str:
+    """``expr`` rewritten by ``transformer``, each number kept as written:
+    printed back from the tree, a decimal of 16 or more digits came out as
+    the float nearest it. Raises SyntaxError when ``expr`` is not Python."""
+    import io
+    import tokenize
+
+    numbers: list[str] = []
+    tokens = []
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(expr).readline):
+            if token.type == tokenize.NUMBER:
+                tokens.append((tokenize.NAME, f"_number{len(numbers)}"))
+                numbers.append(token.string)
+            else:
+                tokens.append((token.type, token.string))
+    except (tokenize.TokenError, IndentationError) as exc:
+        raise SyntaxError(str(exc)) from exc
+    tree = transformer.visit(ast.parse(tokenize.untokenize(tokens).strip(), mode="eval"))
+    return re.sub(r"\b_number(\d+)\b", lambda found: numbers[int(found.group(1))], ast.unparse(tree))
+
+
+def _added(items: list[ast.expr]) -> ast.expr:
+    """The items' sum as a balanced tree: a chain of 330 or more additions
+    was too deep to print back."""
+    if len(items) == 1:
+        return items[0]
+    middle = len(items) // 2
+    return ast.BinOp(_added(items[:middle]), ast.Add(), _added(items[middle:]))
+
+
 class _SumAsAddition(ast.NodeTransformer):
     def visit_Call(self, node: ast.Call) -> ast.AST:
         self.generic_visit(node)
@@ -312,19 +343,18 @@ class _SumAsAddition(ast.NodeTransformer):
         items = only.elts if isinstance(only, ast.List | ast.Tuple) else node.args
         if not items:
             return ast.copy_location(ast.Constant(0), node)
-        total = items[0]
-        for item in items[1:]:
-            total = ast.BinOp(total, ast.Add(), item)
-        return ast.copy_location(total, node)
+        return ast.copy_location(_added(list(items)), node)
 
 
 def _sums_as_additions(expr: str) -> str:
     """``sum([a, b, c])`` as ``a + b + c``. Read with a pattern, a sum whose
     items held a call (a lease's round(4200 * 1.03 ** 2, 2) * 12) kept its
-    brackets and was refused as "disallowed characters"."""
+    brackets and was refused as "disallowed characters". Run after ``^`` is
+    read as ``**``: Python reads ``^`` as a looser operator, and
+    sum([1, 2])^2 came back 1 + 2 ** 2."""
     if "sum" in expr:
         try:
-            return ast.unparse(_SumAsAddition().visit(ast.parse(expr, mode="eval")))
+            return _rewritten(expr, _SumAsAddition())
         except SyntaxError:
             pass  # SymPy's own grammar: the pattern below
 
@@ -359,7 +389,7 @@ _WORD = re.compile(r"\w+")
 _OPENING = re.compile(r"\s*\(")
 _DATE_ARGUMENT = re.compile(r"""\s+|,|\(|\)|'(?:[^']|'')*'|"(?:[^"]|"")*"|\d+(?:\.\d+)?(?![\w.])|(\w+)\s*\(""")
 # What may stand between the date calls: arithmetic and the words above.
-_ARITHMETIC = frozenset(" \t\r\n+-*/%^().,")
+_ARITHMETIC = frozenset(" \t\r\n+-*/%^().,[]")
 # A number given as a date is a Julian day number unless a modifier says it
 # is seconds: julianday('2030') - 180 came back 1850, and the hours from
 # '17.30' and '08.45' came back 8.85. A day number is let through only
@@ -590,7 +620,8 @@ def _evaluate_dates(expr: str) -> str:
         return f"ERROR: cannot evaluate {expr!r}: {exc}. {_DATE_HELP}"
     # SQLite read ROUND, ABS and MAX in any case; the arithmetic reads them lowercase.
     figures = re.sub(r"[A-Za-z_]\w*(?=\s*\()", lambda name: name.group(0).lower(), figures)
-    args = _caret_as_power({"expr": _sums_as_additions(figures)})
+    args = _caret_as_power({"expr": figures})
+    args["expr"] = _sums_as_additions(args["expr"])
     out = _run_isolated("evaluate", args) if _have_sympy() else _run_evaluate(args, exact=True)
     failed = f"ERROR: cannot evaluate {args['expr']!r}: "
     if out.startswith(failed):
@@ -735,10 +766,9 @@ def _pow_as_power(expr: str) -> str:
     if not re.search(r"\bpow\s*\(", expr, re.IGNORECASE):
         return expr
     try:
-        tree = ast.parse(expr, mode="eval")
+        return _rewritten(expr, _PowAsPower())
     except SyntaxError:
         return expr
-    return ast.unparse(_PowAsPower().visit(tree))
 
 
 def _caret_as_power(args: dict[str, Any]) -> dict[str, Any]:
