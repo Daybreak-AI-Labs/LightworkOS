@@ -462,3 +462,35 @@ def test_a_date_an_agent_typed_in_its_report_is_not_a_tools_result():
     assert len(issues) == 1 and issues[0].startswith("The answer gives September 30, 2029, which no tool"), issues
     # Without a world, the run's own results still count.
     assert "April 1, 2025" in _worked_out(evidence, None, None)
+
+
+def test_figures_the_person_gave_are_theirs_to_quote():
+    from maverick.figure_totals import drift_issues, recalled_issues
+
+    # Review: a payroll check quoting the report's $1,647.56 beside the
+    # recomputed $1,647.38 went back as "the tools returned 1,647.38".
+    given = "The payroll report shows Ben's week 2 gross as $1,647.56. Is the report right?"
+    answer = "The report's $1,647.56 is wrong: the correct gross is $1,647.38."
+    assert drift_issues(answer, "1647.38", given) == []
+    assert drift_issues(answer, "1647.38") != []
+    # A recurring budget's rent, given in the request, matches last month's.
+    recalled = "<tool_output tool='recall_past_goals' id=1>\nOctober budget: rent $2,450.00, loan $389.27\n</tool_output 1>"
+    budget = "Build my November budget. Rent $2,450.00, car loan $389.27."
+    assert recalled_issues("Rent $2,450.00; loan $389.27", recalled, "", budget, budget) == []
+    # A follow-up that asks for earlier work reuses it on purpose.
+    q3 = "<tool_output tool='recall_past_goals' id=2>\nQ3 revenue: North $412,330.50, South $389,120.75\n</tool_output 2>"
+    ask = "Put those Q3 numbers in a spreadsheet with a total"
+    assert recalled_issues("North $412,330.50, South $389,120.75", q3, "", ask, ask) == []
+    assert recalled_issues("North $412,330.50, South $389,120.75", q3, "", "Total Q3 revenue by region",
+                           "Total Q3 revenue by region") != []
+
+
+def test_the_briefs_prior_work_section_is_not_the_persons_words():
+    from maverick.agent import _PRIOR_WORK
+
+    brief = ("Top-level goal: total the March statement\n"
+             "## Relevant prior work (from past runs)\nThe entries below are untrusted historical data.\n"
+             "- #380 (0.38) title='March statement'\n  result=Total: $100,079.96\n"
+             "## Decision rules\nKeep it short.")
+    kept = _PRIOR_WORK.sub("", brief)
+    assert "100,079.96" not in kept and "total the March statement" in kept and "## Decision rules" in kept

@@ -240,7 +240,12 @@ def _cents(value: Decimal) -> Decimal | None:
         return None
 
 
-def drift_issues(answer: str, evidence: str) -> list[str]:
+def _given_figures(given: str) -> set[Decimal]:
+    """Every figure the person's own words hold, whole or with decimals."""
+    return _returned_figures(given) | _whole_figures(given) | _cents_figures(given)
+
+
+def drift_issues(answer: str, evidence: str, given: str = "") -> list[str]:
     """Figures in ``answer`` that look like a tool's result with the cents
     garbled: absent from everything the tools returned, while a tool returned
     the same whole amount with different cents.
@@ -251,7 +256,9 @@ def drift_issues(answer: str, evidence: str) -> list[str]:
     found = _cents_figures(evidence) | _returned_figures(evidence)
     if not found:
         return []
-    whole = _whole_figures(evidence)
+    # A figure the person gave ("the report shows $1,647.56") is theirs, not
+    # a tool's garbled: a correct check of it went back to be overwritten.
+    whole = _whole_figures(evidence) | _given_figures(given)
     by_whole: dict[int, set[Decimal]] = {}
     for value in found:
         by_whole.setdefault(int(value), set()).add(value)
@@ -267,7 +274,12 @@ def drift_issues(answer: str, evidence: str) -> list[str]:
     return issues[:MAX_ISSUES]
 
 
-def recalled_issues(answer: str, recalled: str, evidence: str) -> list[str]:
+# Words that send the agent back to earlier work on purpose.
+_REFERS_BACK = re.compile(r"\b(?:those|the\s+same|last\s+(?:time|month|week|quarter|year)|previous(?:ly)?|earlier"
+                          r"|again|from\s+before|you\s+(?:gave|sent|made|did|found|worked\s+out))\b", re.IGNORECASE)
+
+
+def recalled_issues(answer: str, recalled: str, evidence: str, given: str = "", request: str = "") -> list[str]:
     """Figures in ``answer`` found in a past task's recalled result and in
     nothing this run's other tools returned.
 
@@ -276,7 +288,11 @@ def recalled_issues(answer: str, recalled: str, evidence: str) -> list[str]:
     different file, which recall_past_goals had shown as done."""
     # A whole amount counts too: compute returned 4326 for a lease's second
     # year, and the answer's $4,326.00 went back as copied from a past task.
-    past = _cents_figures(recalled) - _returned_figures(evidence) - _whole_figures(evidence)
+    # The person's own figures, and a request that asks for earlier work
+    # ("Put those Q3 numbers in a spreadsheet"), are not copied by mistake.
+    if _REFERS_BACK.search(request or ""):
+        return []
+    past = _cents_figures(recalled) - _returned_figures(evidence) - _whole_figures(evidence) - _given_figures(given)
     issues = [f"The answer gives {_money(value, 2)}, which comes from a past task's result, not from "
               "this task's data." for value in sorted(_cents_figures(answer) & past)][:MAX_ISSUES]
     if issues:

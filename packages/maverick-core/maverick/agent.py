@@ -1859,6 +1859,9 @@ def _figure_evidence(messages: list[dict], limit: int = _VERIFIER_EVIDENCE_CHARS
     return _READBACK.sub(worked_out, _verifier_evidence(messages, limit))
 
 
+# The brief's section of past runs' results (orchestrator._maybe_recall_prior_work).
+_PRIOR_WORK = re.compile(r"\n## Relevant prior work \(from past runs\)\n.*?(?=\n## |\Z)", re.DOTALL)
+
 # Tools whose results are another agent's own report, typed, not worked out.
 _AGENT_REPORTS = ("spawn_subagent", "spawn_swarm", "spawn_specialist", "delegate_to_agent", "recv_from_agent")
 _REPORT_FRAME = re.compile(rf"<tool_output tool='(?:{'|'.join(_AGENT_REPORTS)})' id=([0-9a-f]+)>.*?</tool_output \1>",
@@ -6553,11 +6556,15 @@ class Agent:
         # that window and its date went back as typed.
         everything = _figure_evidence(st.messages, limit=_ALL_EVIDENCE_CHARS)
         recalled = "\n".join(match.group(0) for match in _RECALLED.finditer(evidence))
-        if issues := (answer_issues(final) + drift_issues(final, evidence) + percent_issues(final)
-                      + recalled_issues(final, recalled, _RECALLED.sub("", evidence))
-                      + unsupported_issues(final, everything, self._skill_query())
-                      + date_issues(final, _worked_out(everything, self.ctx.world, self.ctx.goal_id),
-                                    self._skill_query())):
+        # What the person gave (the task, and in a chat the answer before)
+        # is theirs to quote: the brief holds both. Its prior-work section,
+        # past runs' results, is not theirs.
+        request = self._skill_query()
+        given = f"{request}\n{_PRIOR_WORK.sub('', self.brief or '')}"
+        if issues := (answer_issues(final) + drift_issues(final, evidence, given) + percent_issues(final)
+                      + recalled_issues(final, recalled, _RECALLED.sub("", evidence), given, request)
+                      + unsupported_issues(final, everything, given)
+                      + date_issues(final, _worked_out(everything, self.ctx.world, self.ctx.goal_id), given)):
             from .verifier import VerifierVerdict
             verification.attempted = True
             verification.verdict = VerifierVerdict(
