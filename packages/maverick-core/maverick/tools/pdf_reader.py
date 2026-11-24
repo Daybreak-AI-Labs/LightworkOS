@@ -11,6 +11,8 @@ from __future__ import annotations
 import io
 import logging
 import os
+import re
+import textwrap
 from pathlib import Path
 from typing import Any
 
@@ -149,6 +151,40 @@ def _load_bytes(source: str, workdir: Path | None = None) -> bytes | None:
     return data if len(data) <= _MAX_PDF_BYTES else None
 
 
+_AMOUNT = re.compile(r"(?<![\w.])-?\$?\d{1,3}(?:,\d{3})*\.\d{2}(?!\d)")
+_TABULAR_LINES = 4
+
+
+def _tabular(text: str) -> bool:
+    """A page of figures in columns (a statement, an invoice): several lines
+    each holding two or more amounts."""
+    return sum(len(_AMOUNT.findall(line)) >= 2 for line in text.splitlines()) >= _TABULAR_LINES
+
+
+class _Layout:
+    """A tabular page's text with its columns kept. Plain extraction reads a
+    statement row as "10/03 Card-Costco 3,753.21 8,727.34": with the column
+    gone, an agent could not tell a withdrawal from a deposit and got both
+    totals wrong. pypdf's layout mode keeps each figure under its heading."""
+
+    def __init__(self, data: bytes) -> None:
+        self._data, self._reader = data, None
+
+    def page(self, index: int, text: str) -> str:
+        if not _tabular(text):
+            return text
+        try:
+            if self._reader is None:
+                import pypdf  # type: ignore
+
+                self._reader = pypdf.PdfReader(io.BytesIO(self._data))
+            layout = self._reader.pages[index].extract_text(extraction_mode="layout") or ""
+        except Exception:  # noqa: BLE001 -- no layout: the plain text stands
+            return text
+        lines = [line.rstrip() for line in layout.splitlines() if line.strip()]
+        return textwrap.dedent("\n".join(lines)) if lines else text
+
+
 def _extract_with_pdfplumber(data: bytes, pages: str | None, include_tables: bool) -> str | None:
     try:
         import pdfplumber  # type: ignore
@@ -156,12 +192,13 @@ def _extract_with_pdfplumber(data: bytes, pages: str | None, include_tables: boo
         return None
     out: list[str] = []
     has_content = False
+    layout = _Layout(data)
     with pdfplumber.open(io.BytesIO(data)) as pdf:
         total = len(pdf.pages)
         page_indices = _pages_or_say(pages, total)
         for idx in page_indices:
             page = pdf.pages[idx]
-            text = (page.extract_text() or "").strip()
+            text = layout.page(idx, (page.extract_text() or "").strip())
             has_content = has_content or bool(text)
             block = f"=== Page {idx + 1} of {total} ===\n{text}"
             if include_tables:
@@ -191,8 +228,9 @@ def _extract_with_pypdf(data: bytes, pages: str | None) -> str | None:
     page_indices = _pages_or_say(pages, total)
     out: list[str] = []
     has_content = False
+    layout = _Layout(data)
     for idx in page_indices:
-        text = (reader.pages[idx].extract_text() or "").strip()
+        text = layout.page(idx, (reader.pages[idx].extract_text() or "").strip())
         has_content = has_content or bool(text)
         out.append(f"=== Page {idx + 1} of {total} ===\n{text}")
     return "\n\n".join(out) if has_content else ""

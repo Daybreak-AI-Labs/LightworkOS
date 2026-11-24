@@ -86,3 +86,26 @@ def test_a_page_selection_problem_is_said_plainly():
     assert out.startswith("ERROR: this PDF has") and "leave pages out" in out
     bad = pdf_text(data, pages="a-b", max_chars=10_000)
     assert bad.startswith("ERROR: invalid PDF page selection")
+
+
+def test_a_statement_table_keeps_its_columns():
+    # Live: a bank statement read as "10/03 Card-Costco 3,753.21 8,727.34" and
+    # "10/05 Cashdeposit 3,459.47 12,186.81": with the columns gone, the agent
+    # could not tell withdrawals from deposits and got both totals wrong.
+    from maverick.markdown_pdf import pdf_from_markdown
+    from maverick.tools.pdf_reader import extract_text_from_bytes
+
+    statement = ("# Business Checking\n\nOpening balance: $12,480.55\n\n"
+                 "| Date | Description | Withdrawals | Deposits | Balance |\n|---|---|---:|---:|---:|\n"
+                 "| 10/03 | Card - Costco | 3,753.21 | | 8,727.34 |\n| 10/05 | Cash deposit | | 3,459.47 | 12,186.81 |\n"
+                 "| 10/07 | ACH - PG&E | 4,249.27 | | 7,937.54 |\n| 10/09 | Card settlement | | 2,422.72 | 10,360.26 |\n"
+                 "| 10/10 | Check | 718.81 | | 9,641.45 |\n")
+    text = extract_text_from_bytes(pdf_from_markdown(statement))
+    lines = {line.split()[0]: line for line in text.splitlines() if line[:3] in ("10/", "Dat")}
+    withdrawal, deposit = lines["10/03"].index("3,753.21"), lines["10/05"].index("3,459.47")
+    assert deposit > withdrawal + 4, text
+    assert lines["Date"].index("Deposits") > lines["Date"].index("Withdrawals"), text
+    assert "Cash deposit" in lines["10/05"], text
+    # A page of prose reads as before.
+    prose = extract_text_from_bytes(pdf_from_markdown("# Note\n\nKeep it posted by the sink. Costs are shared.\n"))
+    assert "Keep it posted by the sink. Costs are shared." in prose, prose
