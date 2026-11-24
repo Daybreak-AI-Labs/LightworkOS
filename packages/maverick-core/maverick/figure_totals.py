@@ -287,6 +287,27 @@ def recalled_issues(answer: str, recalled: str, evidence: str) -> list[str]:
     return issues
 
 
+def unsupported_issues(answer: str, evidence: str, given: str = "") -> list[str]:
+    """Money figures in ``answer`` that no tool returned, no file read holds
+    and the request (``given``) does not state, when there are two or more.
+
+    Live: a lease's rents for years two to five and the total over the term
+    were typed without a tool call; the total was $644.64 short, and the
+    model judge accepted it. A figure the tools returned with more decimals
+    and the answer rounds to cents is the tool's own."""
+    if not evidence.strip():
+        return []
+    known = (_returned_figures(evidence) | _whole_figures(evidence) | _cents_figures(evidence)
+             | _returned_figures(given) | _whole_figures(given) | _cents_figures(given))
+    rounded = {_cents(value) for value in known} - {None}
+    missing = [value for value in sorted(_cents_figures(answer)) if value not in known and value not in rounded]
+    if len(missing) < 2:
+        return []
+    shown = ", ".join(_money(value, 2) for value in missing[:4]) + (" and others" if len(missing) > 4 else "")
+    return [f"The answer gives {shown}, which no tool returned and neither the task's files nor the request "
+            "hold. Work each one out with compute or a query and copy the results exactly."]
+
+
 _PERCENT = re.compile(r"(?<![\d.])(\d{1,2}(?:\.\d{1,4})?)\s?%")
 
 

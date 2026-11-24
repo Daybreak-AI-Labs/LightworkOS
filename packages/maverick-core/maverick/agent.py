@@ -6510,14 +6510,22 @@ class Agent:
         # grand total was a dollar off and the model judge let it through.
         # A figure typed with its cents garbled (the tools returned 1,647.38,
         # the answer said 1,647.56) goes back the same way.
-        from .figure_totals import answer_issues, drift_issues, percent_issues, recalled_issues
+        from .figure_totals import (
+            answer_issues,
+            drift_issues,
+            percent_issues,
+            recalled_issues,
+            unsupported_issues,
+        )
         # What a write put in a file is the agent's own typing, not a tool's
         # result, but what the file's formulas worked out is; the model
-        # verifier below still sees the whole read-back.
+        # verifier below still sees the whole read-back. Money figures no
+        # tool returned go back too: a lease's typed total was $644.64 short.
         evidence = _figure_evidence(st.messages)
         recalled = "\n".join(match.group(0) for match in _RECALLED.finditer(evidence))
         if issues := (answer_issues(final) + drift_issues(final, evidence) + percent_issues(final)
-                      + recalled_issues(final, recalled, _RECALLED.sub("", evidence))):
+                      + recalled_issues(final, recalled, _RECALLED.sub("", evidence))
+                      + unsupported_issues(final, evidence, self._skill_query())):
             from .verifier import VerifierVerdict
             verification.attempted = True
             verification.verdict = VerifierVerdict(

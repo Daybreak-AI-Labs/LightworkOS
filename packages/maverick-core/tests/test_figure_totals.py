@@ -390,3 +390,27 @@ async def test_a_wide_row_of_figures_in_a_workbook_does_not_fail_the_goal(tmp_pa
     goal = world.get_goal(gid)
     assert goal.status == "done"
     assert "495.25 units" in goal.result
+
+
+def test_money_figures_no_tool_returned_are_named():
+    from maverick.figure_totals import unsupported_issues
+
+    # Live: a lease's rents and total were typed without a tool; the total was
+    # $644.64 short and the model judge accepted it.
+    evidence = ("<tool_output tool='read_attachment' id=1>\nBase Rent of Four Thousand Two Hundred Dollars "
+                "($4,200.00) during the first Lease Year\n</tool_output 1>\n"
+                "<tool_output tool='compute' id=2>\n2029-10-02\n</tool_output 2>")
+    answer = ("Year 1: $4,200.00\nYear 2: $4,326.00\nYear 3: $4,455.78\nYear 4: $4,589.45\nYear 5: $4,727.13\n"
+              "Total: $266,935.68")
+    assert unsupported_issues(answer, evidence) == [
+        "The answer gives 4,326.00, 4,455.78, 4,589.45, 4,727.13 and others, which no tool returned and "
+        "neither the task's files nor the request hold. Work each one out with compute or a query and copy "
+        "the results exactly."]
+    # Figures a tool returned (whole, unrounded or as written), or the request gave, stand.
+    worked = evidence + "\n4326, 4455.78, 4589.4534, 4727.13\n267580.32"
+    assert unsupported_issues(answer.replace("266,935.68", "267,580.32"), worked) == []
+    assert unsupported_issues("Budget $12,500.00 and $3,200.00", "<tool_output tool='x' id=3>\nok\n</tool_output 3>",
+                              given="Our budget is $12,500.00 and rent is $3,200.00") == []
+    # One stray figure, or an answer with no tool use at all, is left to the model judge.
+    assert unsupported_issues("Total: $50,400.00", evidence) == []
+    assert unsupported_issues(answer, "") == []
