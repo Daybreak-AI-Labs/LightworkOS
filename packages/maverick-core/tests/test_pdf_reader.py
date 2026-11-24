@@ -109,3 +109,34 @@ def test_a_statement_table_keeps_its_columns():
     # A page of prose reads as before.
     prose = extract_text_from_bytes(pdf_from_markdown("# Note\n\nKeep it posted by the sink. Costs are shared.\n"))
     assert "Keep it posted by the sink. Costs are shared." in prose, prose
+
+
+_STATEMENT = ("# Business Checking\n\nOpening balance: $12,480.55\n\n"
+              "| Date | Description | Withdrawals | Deposits | Balance |\n|---|---|---:|---:|---:|\n"
+              "| 10/03 | Card - Costco | 3,753.21 | | 8,727.34 |\n| 10/05 | Cash deposit | | 3,459.47 | 12,186.81 |\n"
+              "| 10/07 | ACH - PG&E | 4,249.27 | | 7,937.54 |\n| 10/09 | Card settlement | | 2,422.72 | 10,360.26 |\n"
+              "| 10/10 | Check | 718.81 | | 9,641.45 |\n\nClosing balance: $9,641.45\n")
+
+
+def test_a_statement_pdf_becomes_a_table_sql_can_total():
+    # Live, 4 of 5 runs: an agent typed a statement's 28 amounts into its own
+    # sums and dropped some; a CSV gets one exact query, a PDF got nothing.
+    from maverick.markdown_pdf import pdf_from_markdown
+    from maverick.tools.csv_query import query_tables
+    from maverick.tools.pdf_reader import extract_text_from_bytes, table_csv
+
+    csv_text = table_csv(extract_text_from_bytes(pdf_from_markdown(_STATEMENT)))
+    assert csv_text.splitlines()[0] == "Date,Description,Withdrawals,Deposits,Balance"
+    assert csv_text.splitlines()[2] == '10/05,Cash deposit,,"3,459.47","12,186.81"'
+    out = query_tables({"data": ("statement.pdf", csv_text)},
+                       "SELECT ROUND(SUM(Withdrawals), 2) AS w, ROUND(SUM(Deposits), 2) AS d, COUNT(*) AS n, "
+                       "MAX(Withdrawals) AS largest FROM data")
+    assert out.splitlines() == ["w,d,n,largest", "8721.29,5882.19,5,4249.27"]
+
+
+def test_a_pdf_without_a_table_has_no_table_to_query():
+    from maverick.markdown_pdf import pdf_from_markdown
+    from maverick.tools.pdf_reader import extract_text_from_bytes, table_csv
+
+    note = extract_text_from_bytes(pdf_from_markdown("# Note\n\nKeep it posted by the sink. Costs are shared.\n"))
+    assert table_csv(note) is None

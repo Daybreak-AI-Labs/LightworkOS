@@ -70,7 +70,7 @@ def list_attachments_tool(world, goal_id: int | None) -> Tool:
         # such as spreadsheet_read refuse them, and an agent that got that
         # refusal computed a payroll table by hand and got a row wrong.
         lines.append("Read text, PDF, CSV and Excel files with read_attachment and the id. For a CSV "
-                     "or Excel file, "
+                     "or Excel file, or a PDF statement or invoice, "
                      "pass `sql` (one SELECT over the table `data`) to compute totals or "
                      "per-row values exactly. Only view_image and read_pdf accept these paths.")
         return "\n".join(lines)
@@ -135,7 +135,11 @@ def read_attachment_tool(world, goal_id: int | None, sandbox=None) -> Tool:
         from ..attachments import READABLE_TEXT_MIMES, read_bytes
         if match.mime == "application/pdf":
             text = _pdf_attachment_text(match, args.get("pages"), sandbox)
-            return text if text.startswith("ERROR:") else _window(text, args)
+            if text.startswith("ERROR:"):
+                return text
+            if args.get("sql"):
+                return _pdf_table_query(match.filename, text, str(args["sql"]))
+            return _window(text, args)
         if _is_workbook(match):
             return _workbook(match, args)
         if not match.mime.startswith(READABLE_TEXT_MIMES):
@@ -158,9 +162,10 @@ def read_attachment_tool(world, goal_id: int | None, sandbox=None) -> Tool:
                      "A long file returns its first 100,000 characters: pass `search` "
                      "to get every line containing a phrase, or `offset` to read on. "
                      "An Excel file returns its first sheet as CSV. "
-                     "For a CSV or Excel file, pass `sql`: "
+                     "For a CSV or Excel file, or a PDF with a table of figures (a bank "
+                     "statement, an invoice), pass `sql`: "
                      "one read-only SELECT over the table `data` (its columns are the "
-                     "header row). Use it for totals, counts, averages and per-row "
+                     "header row; in a PDF, the table's headings). Use it for totals, counts, averages and per-row "
                      "calculations instead of working numbers out yourself, for example "
                      "`SELECT name, ROUND(rate*(MIN(hours,40)+MAX(hours-40,0)*1.5),2) AS pay "
                      "FROM data` or `SELECT dept, SUM(amount) FROM data GROUP BY dept`. "
@@ -259,6 +264,18 @@ def _matching_lines(text: str, phrase: str) -> str:
     more = f" (showing the first {_MAX_MATCHES})" if len(hits) > _MAX_MATCHES else ""
     noun = "line matches" if len(hits) == 1 else "lines match"
     return f"{len(hits)} {noun} {phrase!r}{more}:\n" + "\n".join(shown)
+
+
+def _pdf_table_query(filename: str, text: str, sql: str) -> str:
+    """One read-only SELECT over a statement or invoice PDF's table."""
+    from .csv_query import query_tables
+    from .pdf_reader import table_csv
+
+    table = table_csv(text)
+    if table is None:
+        return (f"ERROR: no table of figures was found in {filename}; read its text instead "
+                "and add any figures with compute")
+    return query_tables({"data": (filename, table)}, sql)
 
 
 _TABLE_MIMES = ("text/csv", "application/csv", "text/comma-separated-values")

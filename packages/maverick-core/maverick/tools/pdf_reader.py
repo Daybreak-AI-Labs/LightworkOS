@@ -185,6 +185,66 @@ class _Layout:
         return textwrap.dedent("\n".join(lines)) if lines else text
 
 
+_GROUP = re.compile(r"\S+(?: \S+)*")  # words one space apart; two or more spaces part columns
+
+
+def _groups(line: str) -> list[tuple[int, int, str]]:
+    return [(m.start(), m.end(), m.group()) for m in _GROUP.finditer(line)]
+
+
+def _column(start: int, end: int, columns: list[tuple[int, int, str]]) -> int:
+    """The header a cell sits under: the most overlap, else the nearest."""
+    def score(column: tuple[int, int, str]) -> tuple[int, float]:
+        overlap = min(end, column[1]) - max(start, column[0])
+        return (max(overlap, 0), -abs((start + end) / 2 - (column[0] + column[1]) / 2))
+
+    return max(range(len(columns)), key=lambda index: score(columns[index]))
+
+
+def table_csv(text: str | None) -> str | None:
+    """The table of a statement or invoice PDF as CSV text, from the page
+    text ``extract_text_from_bytes`` gives (tabular pages keep their
+    columns): the header row's words name the columns and each later row's
+    figures go to the column they sit under. A repeated header on a later
+    page is skipped. None when no page has such a table.
+
+    Asked for a statement's totals, an agent typed its 28 amounts into its
+    own sums and dropped some; a CSV gets one exact query, so a PDF table
+    now does too."""
+    import csv
+
+    if not text:
+        return None
+    header: list[tuple[int, int, str]] | None = None
+    rows: list[list[str]] = []
+    lines = [line.rstrip() for line in text.splitlines()]
+    for index, line in enumerate(lines):
+        groups = _groups(line)
+        if len(_AMOUNT.findall(line)) == 0 or len(groups) < 2:
+            continue
+        if header is None:
+            above = next((_groups(lines[back]) for back in range(index - 1, max(index - 4, -1), -1)
+                          if len(_groups(lines[back])) >= 3 and not _AMOUNT.search(lines[back])), None)
+            if above is None:
+                continue
+            header = above
+        cells = [""] * len(header)
+        for start, end, value in groups:
+            where = _column(start, end, header)
+            cells[where] = f"{cells[where]} {value}".strip()
+        rows.append(cells)
+    if header is None or len(rows) < 2:
+        return None
+    names: list[str] = []
+    for _start, _end, name in header:
+        names.append(name if name not in names else f"{name}_{len(names) + 1}")
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow(names)
+    writer.writerows(row for row in rows if [c.strip() for c in row] != [n for _s, _e, n in header])
+    return out.getvalue()
+
+
 def _extract_with_pdfplumber(data: bytes, pages: str | None, include_tables: bool) -> str | None:
     try:
         import pdfplumber  # type: ignore

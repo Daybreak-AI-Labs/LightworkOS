@@ -273,3 +273,28 @@ def test_a_follow_up_reads_the_files_attached_earlier_in_its_chat(tmp_path):
         for wanted in (aid, old_id):
             assert read_attachment_tool(world, goal_id).fn({"id": wanted}).startswith("ERROR: no attachment")
         assert list_attachments_tool(world, goal_id).fn({}) == "(no attachments)"
+
+
+def test_a_statement_pdf_answers_an_exact_select(tmp_path):
+    # Live, 4 of 5 runs: an agent typed a statement PDF's amounts into its own
+    # sums and dropped some. Its table now answers one query, like a CSV.
+    from maverick.markdown_pdf import pdf_from_markdown
+
+    world = WorldModel(tmp_path / "w.db")
+    gid = world.create_goal("g", "")
+    statement = ("# Business Checking\n\n| Date | Description | Withdrawals | Deposits | Balance |\n"
+                 "|---|---|---:|---:|---:|\n| 10/03 | Card - Costco | 3,753.21 | | 8,727.34 |\n"
+                 "| 10/05 | Cash deposit | | 3,459.47 | 12,186.81 |\n| 10/07 | ACH - PG&E | 4,249.27 | | 7,937.54 |\n"
+                 "| 10/09 | Card settlement | | 2,422.72 | 10,360.26 |\n| 10/10 | Check | 718.81 | | 9,641.45 |\n")
+    rec = att.store(gid, "statement.pdf", "application/pdf", pdf_from_markdown(statement), root=tmp_path / "a")
+    aid = world.add_attachment(gid, rec.filename, rec.mime, rec.size_bytes, rec.sha256, str(rec.path))
+    tool = read_attachment_tool(world, gid)
+    out = tool.fn({"id": aid, "sql": "SELECT ROUND(SUM(Withdrawals), 2) AS w, ROUND(SUM(Deposits), 2) AS d, "
+                                     "MAX(Withdrawals) AS largest FROM data"})
+    assert out == "w,d,largest\n8721.29,5882.19,4249.27", out
+    assert "PDF" in tool.description and "statement" in tool.description
+    # A PDF with no table says so instead of guessing.
+    note = att.store(gid, "note.pdf", "application/pdf", pdf_from_markdown("# Note\n\nNo figures here.\n"),
+                     root=tmp_path / "a")
+    nid = world.add_attachment(gid, note.filename, note.mime, note.size_bytes, note.sha256, str(note.path))
+    assert tool.fn({"id": nid, "sql": "SELECT 1 FROM data"}).startswith("ERROR: no table")
