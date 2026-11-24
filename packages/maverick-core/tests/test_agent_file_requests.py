@@ -2,6 +2,8 @@
 receive one and the agent can make it and hand it over."""
 from __future__ import annotations
 
+import time
+
 import pytest
 from maverick import decision_requests as dr
 from maverick import task_files
@@ -44,6 +46,12 @@ async def _run(tmp_path, fake_llm, make_llm_response, title: str, *, answer: str
     await run_goal(llm=fake_llm, world=world, budget=Budget(max_dollars=1.0), goal_id=gid,
                    sandbox=LocalBackend(workdir=tmp_path), max_depth=1, domain=domain)
     return world, gid
+
+
+def _saves_csv():
+    write = ToolCall(id="c1", name="spreadsheet", input={"op": "write", "path": "totals.csv",
+                                                         "rows": [["Name", "Total"], ["Ana", 38]]})
+    return [write, ToolCall(id="c2", name="deliver_file", input={"path": "totals.csv"})]
 
 
 def _sent_back(fake_llm) -> str:
@@ -101,6 +109,12 @@ async def test_a_csv_converted_to_a_spreadsheet_needs_the_workbook(tmp_path, fak
     "Please find attached the lease as a PDF. When does it end?",
     "Our price list is attached as a PDF. Raise every price by 4% and list the new prices.",
     "We've attached the policy as a Word document. Summarize the leave rules.",
+    "Attaching the invoice as a PDF. What is the total due?",
+    "I'm uploading the contract as a PDF. When does it expire?",
+    "I'm sharing the payroll export as a CSV. What were total hours per employee?",
+    "Forwarding the policy as a Word document. Summarize the leave rules.",
+    "The ledger is below as a CSV. What is the closing balance?",
+    "Give me the totals, the PDF is attached",
 ])
 def test_a_file_described_as_sent_is_not_asked_for(request_text):
     assert _asked_for(request_text) == []
@@ -111,6 +125,45 @@ async def test_a_question_about_an_attached_pdf_keeps_its_answer(tmp_path, fake_
     await _run(tmp_path, fake_llm, make_llm_response, "The invoice is attached as a PDF. What is the total due?",
                answer="The total due is $1,240.00.")
     assert _sent_back(fake_llm) == ""
+
+
+# A giving word that is not the clause's verb ("the attached notes", "the
+# figures sent by finance") or one an asking word follows ("I shared
+# earlier and give me") used to switch off a real request.
+@pytest.mark.parametrize(("request_text", "wanted"), [
+    ("Convert the attached notes into a PDF", ["a PDF"]),
+    ("Summarize the attached report and give me the result as a Word document", ["a Word document"]),
+    ("Reformat the included table as a CSV", ["a CSV file"]),
+    ("Use the numbers I shared earlier and give me the totals as a CSV", ["a CSV file"]),
+    ("Make sure this is saved as a PDF", ["a PDF"]),
+])
+def test_a_file_asked_for_beside_a_file_given_counts(request_text, wanted):
+    assert _asked_for(request_text) == wanted
+
+
+@pytest.mark.parametrize("request_text", [
+    "Read the attached invoices and save the totals as a spreadsheet",
+    "Combine the attached timesheets into one spreadsheet",
+    "Put the uploaded sales data into an Excel workbook",
+    "Format the figures sent by finance as a spreadsheet",
+])
+def test_a_spreadsheet_asked_for_beside_a_file_given_counts(request_text):
+    assert _asked_for_workbook(request_text) is True
+
+
+@pytest.mark.asyncio
+async def test_a_csv_for_a_spreadsheet_from_attached_files_goes_back(tmp_path, fake_llm, make_llm_response):
+    await _run(tmp_path, fake_llm, make_llm_response,
+               "Read the attached invoices and save the totals as a spreadsheet",
+               calls=_saves_csv(), answer="I saved totals.csv.")
+    assert "asked for a spreadsheet" in _sent_back(fake_llm)
+
+
+@pytest.mark.asyncio
+async def test_attached_notes_to_convert_into_a_pdf_need_the_pdf(tmp_path, fake_llm, make_llm_response):
+    await _run(tmp_path, fake_llm, make_llm_response, "Convert the attached notes into a PDF",
+               answer="Here are the notes: item 1, item 2.")
+    assert "asked to receive a PDF" in _sent_back(fake_llm)
 
 
 # ---- Refusals, either/or questions and the agent's own options -----------
@@ -125,6 +178,73 @@ async def test_a_question_about_an_attached_pdf_keeps_its_answer(tmp_path, fake_
 ])
 def test_a_refused_or_offered_file_is_not_asked_for(request_text):
     assert _asked_for(request_text) == []
+
+
+# A negation about something else in the clause (unpaid customers, a
+# missing manager, not owning Excel) used to cancel the request.
+@pytest.mark.parametrize(("request_text", "wanted"), [
+    ("Give me a list of customers who have not paid as a PDF", ["a PDF"]),
+    ("Give me all employees without a manager as a CSV", ["a CSV file"]),
+    ("Export every order that has no tracking number as a CSV", ["a CSV file"]),
+    ("I don't have Excel so give me a CSV", ["a CSV file"]),
+    ("Don't forget to give me a PDF", ["a PDF"]),
+])
+def test_a_negation_about_something_else_keeps_the_request(request_text, wanted):
+    assert _asked_for(request_text) == wanted
+
+
+@pytest.mark.parametrize("request_text", [
+    "List invoices that are not paid and give me a spreadsheet of them",
+    "I'm not sure what is best but make me a spreadsheet",
+])
+def test_a_negation_about_something_else_keeps_the_spreadsheet_request(request_text):
+    assert _asked_for_workbook(request_text) is True
+
+
+@pytest.mark.asyncio
+async def test_a_pdf_of_unpaid_customers_goes_back_to_be_saved(tmp_path, fake_llm, make_llm_response):
+    await _run(tmp_path, fake_llm, make_llm_response, "Give me a list of customers who have not paid as a PDF",
+               answer="Customers who have not paid: Ana, Ben.")
+    assert "asked to receive a PDF" in _sent_back(fake_llm)
+
+
+@pytest.mark.asyncio
+async def test_a_spreadsheet_of_unpaid_invoices_goes_back_for_the_workbook(tmp_path, fake_llm, make_llm_response):
+    await _run(tmp_path, fake_llm, make_llm_response,
+               "List invoices that are not paid and give me a spreadsheet of them",
+               calls=_saves_csv(), answer="I saved totals.csv.")
+    assert "asked for a spreadsheet" in _sent_back(fake_llm)
+
+
+# A choice the person asks for wants one file, and either type will do; a
+# choice they weigh in a question wants none.
+def test_a_choice_asked_for_wants_the_first_file_or_another_offered():
+    request = "Send it as a PDF or Word document"
+    assert _asked_for(request) == ["a PDF"]
+    assert not any(_asks_to_receive(pattern, request, {".docx"}) for pattern, *_rest in _FILE_TYPE_REQUESTS)
+
+
+@pytest.mark.asyncio
+async def test_a_choice_of_files_answered_in_the_chat_goes_back(tmp_path, fake_llm, make_llm_response):
+    await _run(tmp_path, fake_llm, make_llm_response, "Send it as a PDF or Word document",
+               answer="Policy summary: staff get 20 days of leave.")
+    assert "asked to receive a PDF" in _sent_back(fake_llm)
+
+
+@pytest.mark.asyncio
+async def test_a_choice_of_files_is_met_by_either(tmp_path, fake_llm, make_llm_response):
+    write = ToolCall(id="c1", name="write_file", input={"path": "policy.docx", "content": "Leave: 20 days"})
+    deliver = ToolCall(id="c2", name="deliver_file", input={"path": "policy.docx"})
+    await _run(tmp_path, fake_llm, make_llm_response, "Send it as a PDF or Word document",
+               calls=[write, deliver], answer="I saved policy.docx.")
+    assert _sent_back(fake_llm) == ""
+
+
+@pytest.mark.asyncio
+async def test_a_csv_for_a_spreadsheet_or_a_csv_is_kept(tmp_path, fake_llm, make_llm_response):
+    await _run(tmp_path, fake_llm, make_llm_response, "Give me a spreadsheet or a CSV, whichever is easier",
+               calls=_saves_csv(), answer="I saved totals.csv.")
+    assert _sent_back(fake_llm) == ""
 
 
 @pytest.mark.asyncio
@@ -171,12 +291,18 @@ async def test_a_chat_reply_is_read_without_the_options_the_agent_wrote(tmp_path
     ("How much lumber do I need to build a 12x16 deck?", []),
     ("I want to build a deck in my backyard. What permits do I need?", []),
     ("Help me prepare for the presentation tomorrow: list likely questions.", []),
+    ("Help me prepare for a presentation tomorrow.", []),
     ("Give me the numbers on slide 3", []),
     ("Make a 5-slide deck for the board", ["slides"]),
     ("Make me a pitch deck for the seed round", ["slides"]),
     ("Create a short investor presentation", ["slides"]),
     ("Export the plan as PowerPoint", ["slides"]),
     ("Give me 6 slides on the Q3 results", ["slides"]),
+    ("Make a deck for the board meeting", ["slides"]),
+    ("Make one slide summarizing Q3", ["slides"]),
+    ("Make a slide with the KPIs", ["slides"]),
+    ("Prepare the Q3 presentation for the board", ["slides"]),
+    ("Make the board presentation", ["slides"]),
 ])
 def test_only_slides_to_receive_count(request_text, wanted):
     assert _asked_for(request_text) == wanted
@@ -189,6 +315,13 @@ async def test_a_question_about_a_wooden_deck_keeps_its_answer(tmp_path, fake_ll
     assert _sent_back(fake_llm) == ""
 
 
+@pytest.mark.asyncio
+async def test_a_deck_for_the_board_answered_in_the_chat_goes_back(tmp_path, fake_llm, make_llm_response):
+    await _run(tmp_path, fake_llm, make_llm_response, "Make a deck for the board meeting",
+               answer="Slide 1: Q3 revenue up 12%.")
+    assert "asked to receive slides" in _sent_back(fake_llm)
+
+
 # ---- A request after a comma-joined "here are" still counts ------------
 
 @pytest.mark.parametrize("request_text", [
@@ -198,6 +331,21 @@ async def test_a_question_about_a_wooden_deck_keeps_its_answer(tmp_path, fake_ll
 ])
 def test_a_spreadsheet_asked_for_after_the_files_given_counts(request_text):
     assert _asked_for_workbook(request_text) is True
+
+
+@pytest.mark.parametrize("request_text", [
+    "Give me a sortable, filterable spreadsheet of the orders",
+    "Export the totals as a clean, sortable spreadsheet",
+])
+def test_a_spreadsheet_described_with_a_comma_counts(request_text):
+    assert _asked_for_workbook(request_text) is True
+
+
+@pytest.mark.asyncio
+async def test_a_csv_for_a_sortable_spreadsheet_goes_back(tmp_path, fake_llm, make_llm_response):
+    await _run(tmp_path, fake_llm, make_llm_response, "Give me a sortable, filterable spreadsheet of the orders",
+               calls=_saves_csv(), answer="I saved totals.csv.")
+    assert "asked for a spreadsheet" in _sent_back(fake_llm)
 
 
 def test_a_word_document_asked_for_after_an_attached_pdf_counts():
@@ -214,6 +362,20 @@ async def test_a_csv_for_a_spreadsheet_after_given_files_goes_back(tmp_path, fak
                "Here are the shift logs, make me a spreadsheet of hours per person",
                calls=[write, deliver], answer="I saved hours.csv with hours per person.")
     assert "asked for a spreadsheet" in _sent_back(fake_llm)
+
+
+# ---- A long request is read in linear time --------------------------------
+
+@pytest.mark.parametrize("request_text", [("as a pdf " * 2000)[:16000], ("no " + "as a pdf " * 2000)[:16000]])
+def test_a_long_request_is_read_quickly(request_text):
+    # Each "as a pdf" here is rejected (the source of a conversion), and the
+    # clause used to be rescanned from its start for every one of them: a
+    # 16,000-character task description, the longest the dashboard takes,
+    # held the agent's event loop for over two seconds.
+    started = time.perf_counter()
+    for pattern in (*(row[0] for row in _FILE_TYPE_REQUESTS), _WORKBOOK_REQUEST):
+        _asks_to_receive(pattern, request_text)
+    assert time.perf_counter() - started < 1.0
 
 
 # ---- The checks ask only for files the agent can make and hand over -------
