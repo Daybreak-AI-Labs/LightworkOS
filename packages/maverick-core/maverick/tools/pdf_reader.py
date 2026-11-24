@@ -255,9 +255,19 @@ def table_csv(text: str | None) -> str | None:
         return None
     header: list[tuple[int, int, str]] | None = None
     rows: list[list[str]] = []
+    starts: dict[int, int] = {}  # where the last row's cells start, by column
     lines = [line.rstrip() for line in text.splitlines()]
     for index, line in enumerate(lines):
         groups = _groups(line)
+        if header is not None and rows and groups and not _AMOUNT.search(line) and all(
+                starts.get(_column(start, end, header)) in range(start - 1, start + 2)
+                for start, end, _value in groups):
+            # A description that wrapped onto the next line, starting where its
+            # cell starts; a page footer elsewhere on the line is not one.
+            for start, end, value in groups:
+                where = _column(start, end, header)
+                rows[-1][where] = f"{rows[-1][where]} {value}".strip()
+            continue
         if len(_AMOUNT.findall(line)) == 0 or len(groups) < 2:
             continue
         if header is None:
@@ -269,9 +279,11 @@ def table_csv(text: str | None) -> str | None:
         if groups[0][2].endswith(":"):
             continue  # "Sales tax (8.25%):  $195.72": a summary line, not a row
         cells = [""] * len(header)
+        starts = {}
         for start, end, value in groups:
             where = _column(start, end, header)
             cells[where] = f"{cells[where]} {value}".strip()
+            starts.setdefault(where, start)
         rows.append(cells)
     if header is None or len(rows) < 2:
         return None

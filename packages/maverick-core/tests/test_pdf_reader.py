@@ -162,3 +162,17 @@ def test_an_invoice_pdf_groups_by_its_columns_and_keeps_totals_out_of_the_rows()
     assert out.splitlines() == ["Category,total", "Coffee,774.0", "Dairy,822.6", "Packaging,775.8"], table
     assert "Espresso beans 5lb" in table and "Subtotal" not in table, table
     assert figures_outside_table(text) == ["Subtotal: $2,372.40", "Sales tax (8.25%): $195.72", "Total due: $2,568.12"]
+
+
+def test_a_wrapped_description_joins_its_row_and_a_page_footer_does_not():
+    from maverick.markdown_pdf import pdf_from_markdown
+    from maverick.tools.pdf_reader import extract_text_from_bytes, table_csv
+
+    long = "ACH DEBIT SYSCO FOOD SERVICES OF NORTHERN CALIFORNIA INC REF 0048812 BATCH 77 SETTLEMENT"
+    statement = ("| Date | Description | Withdrawals | Deposits | Balance |\n|---|---|---:|---:|---:|\n"
+                 f"| 10/03 | {long} | 3,753.21 | | 8,727.34 |\n| 10/05 | Cash deposit | | 3,459.47 | 12,186.81 |\n"
+                 "| 10/07 | ACH - PG&E | 4,249.27 | | 7,937.54 |\n| 10/09 | Card settlement | | 2,422.72 | 10,360.26 |\n"
+                 "| 10/10 | Check | 718.81 | | 9,641.45 |\n")
+    table = table_csv(extract_text_from_bytes(pdf_from_markdown(statement)))
+    assert f'10/03,{long},"3,753.21",,"8,727.34"' in table.splitlines(), table
+    assert table.splitlines()[-1] == '10/10,Check,718.81,,"9,641.45"', table
