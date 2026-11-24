@@ -5,7 +5,8 @@ Shared by ``read_attachment`` (one uploaded CSV as ``data``) and
 totals and comparisons replace the model adding numbers in its head. The
 authorizer allows reading the loaded tables and calling built-in functions
 only, so a statement cannot write, attach a file, change settings or load an
-extension; one statement runs per call. ``hours(start, end)`` and
+extension; one statement runs per call. A blank in a column of numbers is
+NULL; a blank in a text column is ''. ``hours(start, end)`` and
 ``overlap(start, end, from, to)`` work out clock times (HH:MM), counting past
 midnight when the end is not after the start.
 """
@@ -88,8 +89,18 @@ def _load(db, name: str, filename: str, text: str) -> str | None:
     quoted = ", ".join('"' + column.replace('"', '""') + '"' for column in header)
     db.execute(f'CREATE TABLE "{name}" ({quoted})')
     width = len(header)
-    db.executemany(f'INSERT INTO "{name}" VALUES ({", ".join("?" * width)})',
-                   [[_cell(c) for c in (row + [""] * width)[:width]] for row in rows[1:] if row])
+    body = [[_cell(c) for c in (row + [""] * width)[:width]] for row in rows[1:] if row]
+    # A blank in a column of numbers is NULL: as text '' it outranked every
+    # number in MAX and counted as 0 in AVG (a statement's withdrawal and
+    # deposit columns are each blank where the other is filled). A text
+    # column keeps '' so a filter such as receipt = '' still finds blanks.
+    for column in range(width):
+        filled = [row[column] for row in body if not (isinstance(row[column], str) and not row[column].strip())]
+        if filled and all(isinstance(value, int | float) for value in filled):
+            for row in body:
+                if isinstance(row[column], str):
+                    row[column] = None
+    db.executemany(f'INSERT INTO "{name}" VALUES ({", ".join("?" * width)})', body)
     return None
 
 

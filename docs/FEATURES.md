@@ -309,11 +309,15 @@ Settings and the installation wizard.
   invoice) is read with pypdf's layout mode, so each figure stays under its
   heading; plain extraction gave "10/03 Card-Costco 3,753.21 8,727.34" and
   an agent could not tell withdrawals from deposits. Prose pages read as
-  before.
+  before. `read_attachment` with `sql` queries such a PDF's table like a CSV
+  (`pdf_reader.table_csv`: the headings name the columns and each figure goes
+  to the column it sits under), so a statement's totals come from one query.
 - **SQL over CSV reads amounts and clock times** (`tools/csv_query.py`) —
   the `read_attachment` and `spreadsheet_read` queries load "4,850.00",
   "$1,089.99" and "($312.18)" as numbers (as text they summed as 4) and keep
-  "02134" as written. `hours(start, end)` gives the hours between two HH:MM
+  "02134" as written. A blank in a column of numbers is NULL (it had
+  outranked every number in MAX and counted as 0 in AVG); a blank in a text
+  column stays ''. `hours(start, end)` gives the hours between two HH:MM
   times, past midnight when the end is not after the start, and
   `overlap(start, end, from, to)` the hours inside a daily window such as a
   22:00-06:00 night premium. `compute` also adds `sum([a, b, c])`, and

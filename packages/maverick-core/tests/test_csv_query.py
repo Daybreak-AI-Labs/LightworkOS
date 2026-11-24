@@ -57,3 +57,14 @@ def test_clock_times_give_hours_across_midnight_and_inside_a_window():
     # A value that is not a clock time gives NULL, not a guess.
     assert _query("a,b\n25:00,x\n", "SELECT hours(a, b) AS h, overlap(a, b, '1:00', '2:00') AS o FROM data") == [
         "h,o", ","]
+
+
+def test_a_blank_in_a_column_of_numbers_is_null_and_a_blank_in_text_stays_blank():
+    # A statement splits withdrawals and deposits into two columns, each
+    # blank where the other is filled: as text '', the blank outranked every
+    # number in MAX and counted as 0 in AVG. A text column keeps '' so a
+    # filter such as receipt = '' still finds the blanks.
+    text = "date,withdrawal,deposit,receipt\n10/03,3753.21,,yes\n10/05,,3459.47,\n10/07,4249.27,,no\n"
+    assert _query(text, "SELECT MAX(withdrawal) AS w, AVG(withdrawal) AS a, COUNT(deposit) AS d FROM data") == [
+        "w,a,d", "4249.27,4001.24,1"]
+    assert _query(text, "SELECT COUNT(*) AS n FROM data WHERE receipt = ''") == ["n", "1"]
