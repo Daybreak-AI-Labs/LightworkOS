@@ -402,6 +402,35 @@ def test_a_read_back_shows_formulas_as_written_once_its_work_runs_out():
     assert lines[2].startswith("1,25,") and lines[-1].endswith(",=SUM(A1:A100000)"), lines[2]
 
 
+@pytest.mark.timeout(30)
+def test_a_read_back_counts_reading_a_worked_out_formula_again_as_work():
+    # Review: a formula cell's result, once worked out, was read again for
+    # free, so sums over 50,000 worked-out cells never reached the cap: 25
+    # rows of 190 such sums held the agent's own process for 140 s after the
+    # file was saved.
+    import time
+
+    rows = [["=1"] * 5 + (["=SUM(A1:E10000)"] * 8 if r < 25 else []) for r in range(10_000)]
+    started = time.monotonic()
+    lines = ss._readback({None: rows}).splitlines()
+    assert time.monotonic() - started < 2.0
+    assert lines[2].startswith("1,1,1,1,1,50000,") and lines[2].endswith(",=SUM(A1:E10000)"), lines[2]
+
+
+@pytest.mark.timeout(60)
+def test_a_read_works_out_a_long_running_balance(tmp_path):
+    # Review: a read once shared a cap on work across all of a sheet's
+    # formulas, so a ledger's running balance (=SUM($B$2:B2101)) came back
+    # blank past about 2,000 rows and a query of the balance was wrong. The
+    # isolated reader, with its own time limit, works them all out.
+    pytest.importorskip("openpyxl")
+    p = tmp_path / "ledger.xlsx"
+    rows = [["Day", "Amount", "Balance"]] + [[r - 1, 10, f"=SUM($B$2:B{r})"] for r in range(2, 2102)]
+    ss._run({"op": "write", "path": str(p), "rows": rows})
+    out = ss._query({"paths": [str(p)], "sql": "SELECT Day, Balance FROM ledger WHERE Day IN (1000, 2100)"}, None)
+    assert "1000,10000" in out and "2100,21000" in out, out
+
+
 def test_a_read_back_shows_a_workbook_as_the_file_holds_it(tmp_path):
     # Review: rows [North, "1200"], [South, "-300"], [Total, =SUM(B2:B3)] read
     # back as "South,-300" and "Total,900", but the file holds both figures as

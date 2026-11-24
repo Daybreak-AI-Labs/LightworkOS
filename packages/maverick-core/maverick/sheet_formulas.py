@@ -21,7 +21,6 @@ _TOKEN = re.compile(r"\s*(?:(\$?[A-Za-z]{1,3}\$?[0-9]{1,7})|([A-Za-z][A-Za-z0-9.
                     r"([0-9]+(?:\.[0-9]*)?(?:[Ee][+-]?[0-9]+)?|\.[0-9]+)|(.))")
 _MAX_DEPTH = 200
 _MAX_RANGE = 100_000
-_MAX_STEPS = 2_000_000
 
 
 class _Uncomputable(Exception):
@@ -34,13 +33,17 @@ class Memo:
     after which the sheet's remaining formulas are left uncomputed. An
     amortization schedule reads the balance above twice a row; working each
     reference out afresh doubled the work with every row, and 23 rows ran for
-    minutes."""
+    minutes. ``steps=None`` leaves the work uncapped, for a caller with a
+    time limit of its own: a cap shared by a read's formulas left a ledger's
+    running balance blank past about 2,000 rows."""
 
-    def __init__(self, steps: int = _MAX_STEPS):
+    def __init__(self, steps: int | None = None):
         self.values: dict[str, Decimal] = {}
         self.steps = steps
 
     def spend(self, steps: int) -> None:
+        if self.steps is None:
+            return
         self.steps -= steps
         if self.steps < 0:
             raise _Uncomputable("too much work for one sheet")
@@ -232,11 +235,13 @@ def evaluate(formula: Any, get: Callable[[str], Any], memo: Memo | None = None) 
 
     def cell(ref: str, depth: int, in_range: bool) -> Decimal | None:
         key = ref.replace("$", "").upper()
+        # A result read again is work too: free, 25 rows of sums over 50,000
+        # worked-out cells never reached the cap and ran for minutes.
+        memo.spend(1)
         if key in memo.values:
             return memo.values[key]
         if key in visiting or depth > _MAX_DEPTH:
             raise _Uncomputable("a circular reference")
-        memo.spend(1)
         value = get(key)
         if isinstance(value, str) and value.startswith("="):
             visiting.add(key)

@@ -403,6 +403,8 @@ class _Computed:
 
         self._sheets = (formulas, cached)
         self._grid: dict[str, Any] | None = None
+        # No cap on the work: this runs in the isolated reader, whose time
+        # limit bounds it.
         self._memo = Memo()
 
     def _cells(self) -> dict[str, Any]:
