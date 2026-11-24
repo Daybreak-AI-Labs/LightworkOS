@@ -18,7 +18,9 @@ QUEUED = "QUEUED question #"
 # assumptions" and then waited for the person; such a question is the
 # agent's to settle.
 _OWN_ANSWER = re.compile(
-    r"\bI(?:'d| would)? (?:recommend|suggest)\b|\b(?:otherwise|if not|by default),? I(?:'ll| will)\b",
+    r"\bI(?:['\u2019]d| would)? (?:recommend|suggest)\b"
+    r"|\b(?:otherwise|if not|by default),? I(?:['\u2019]ll| will)\b"
+    r"|\bI(?:['\u2019]ll| will)\b[^.?!]{0,80}\bunless you\b",
     re.IGNORECASE)
 
 

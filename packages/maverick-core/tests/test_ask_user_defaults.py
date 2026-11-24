@@ -20,6 +20,10 @@ _OWN_CHOICE = ("Should I base the budget on a conservative, base-case, or aggres
     "Which format do you want, PDF or Word? I'd suggest PDF.",
     "Do you have a logo to include? If not, I'll leave a placeholder.",
     "What tone? By default I'll keep it friendly and professional.",
+    # Live, with the model's curly apostrophe:
+    "One content choice I\u2019ll make unless you prefer otherwise: plain <p> tags. Tell me now; otherwise "
+    "I\u2019ll proceed with that default.",
+    "I will use the 2026 prices unless you say otherwise.",
 ])
 def test_a_question_with_the_agents_own_answer_is_not_sent(tmp_path, question):
     world = WorldModel(tmp_path / "w.db")
