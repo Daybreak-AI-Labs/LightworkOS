@@ -269,13 +269,19 @@ def _matching_lines(text: str, phrase: str) -> str:
 def _pdf_table_query(filename: str, text: str, sql: str) -> str:
     """One read-only SELECT over a statement or invoice PDF's table."""
     from .csv_query import query_tables
-    from .pdf_reader import table_csv
+    from .pdf_reader import figures_outside_table, table_csv
 
     table = table_csv(text)
     if table is None:
         return (f"ERROR: no table of figures was found in {filename}; read its text instead "
                 "and add any figures with compute")
-    return query_tables({"data": (filename, table)}, sql)
+    result = query_tables({"data": (filename, table)}, sql)
+    outside = figures_outside_table(text)
+    if result.startswith("ERROR") or not outside:
+        return result
+    # Live: with only the table in view, an agent took the first row's balance
+    # as the statement's opening balance and said it did not reconcile.
+    return result + "\n\nFigures in the PDF outside the table:\n" + "\n".join(outside)
 
 
 _TABLE_MIMES = ("text/csv", "application/csv", "text/comma-separated-values")

@@ -201,6 +201,15 @@ def _column(start: int, end: int, columns: list[tuple[int, int, str]]) -> int:
     return max(range(len(columns)), key=lambda index: score(columns[index]))
 
 
+def figures_outside_table(text: str | None, limit: int = 12) -> list[str]:
+    """Lines holding an amount that are not rows of the table, such as a
+    statement's opening and closing balances."""
+    if not text or table_csv(text) is None:
+        return []
+    return [line.strip() for line in text.splitlines()
+            if _AMOUNT.search(line) and len(_groups(line.rstrip())) < 2][:limit]
+
+
 def table_csv(text: str | None) -> str | None:
     """The table of a statement or invoice PDF as CSV text, from the page
     text ``extract_text_from_bytes`` gives (tabular pages keep their

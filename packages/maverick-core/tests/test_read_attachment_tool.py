@@ -282,16 +282,21 @@ def test_a_statement_pdf_answers_an_exact_select(tmp_path):
 
     world = WorldModel(tmp_path / "w.db")
     gid = world.create_goal("g", "")
-    statement = ("# Business Checking\n\n| Date | Description | Withdrawals | Deposits | Balance |\n"
+    statement = ("# Business Checking\n\nOpening balance: $12,480.55\n\n"
+                 "| Date | Description | Withdrawals | Deposits | Balance |\n"
                  "|---|---|---:|---:|---:|\n| 10/03 | Card - Costco | 3,753.21 | | 8,727.34 |\n"
                  "| 10/05 | Cash deposit | | 3,459.47 | 12,186.81 |\n| 10/07 | ACH - PG&E | 4,249.27 | | 7,937.54 |\n"
-                 "| 10/09 | Card settlement | | 2,422.72 | 10,360.26 |\n| 10/10 | Check | 718.81 | | 9,641.45 |\n")
+                 "| 10/09 | Card settlement | | 2,422.72 | 10,360.26 |\n| 10/10 | Check | 718.81 | | 9,641.45 |\n"
+                 "\nClosing balance: $9,641.45\n")
     rec = att.store(gid, "statement.pdf", "application/pdf", pdf_from_markdown(statement), root=tmp_path / "a")
     aid = world.add_attachment(gid, rec.filename, rec.mime, rec.size_bytes, rec.sha256, str(rec.path))
     tool = read_attachment_tool(world, gid)
     out = tool.fn({"id": aid, "sql": "SELECT ROUND(SUM(Withdrawals), 2) AS w, ROUND(SUM(Deposits), 2) AS d, "
                                      "MAX(Withdrawals) AS largest FROM data"})
-    assert out == "w,d,largest\n8721.29,5882.19,4249.27", out
+    assert out.startswith("w,d,largest\n8721.29,5882.19,4249.27"), out
+    # Live: with only the table in view, an agent took the first row's balance
+    # as the opening balance and said the statement did not reconcile.
+    assert "Opening balance: $12,480.55" in out and "Closing balance: $9,641.45" in out, out
     assert "PDF" in tool.description and "statement" in tool.description
     # A PDF with no table says so instead of guessing.
     note = att.store(gid, "note.pdf", "application/pdf", pdf_from_markdown("# Note\n\nNo figures here.\n"),
