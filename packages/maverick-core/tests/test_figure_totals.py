@@ -339,3 +339,29 @@ async def test_a_total_a_workbook_formula_worked_out_counts_as_a_tools_result(tm
     assert "Total,100079.96" in str(fake_llm.calls[2].get("messages", ""))  # the read-back the agent saw
     assert "comes from a past task's result" not in str(fake_llm.calls)
     assert "$100,079.96" in world.get_goal(gid).result
+
+
+@pytest.mark.asyncio
+async def test_a_wide_row_of_figures_in_a_workbook_does_not_fail_the_goal(tmp_path, fake_llm, make_llm_response):
+    # Review: the read-back's CSV text runs a row of 3-digit cells together
+    # into one 39-digit figure, and rounding it to cents raised
+    # InvalidOperation, so the whole goal ended as "internal error".
+    from maverick.llm import ToolCall
+
+    row = ["Widget", 120, 340, 560, 780, 910, 230, 450, 670, 890, 110, 330, 553, "=AVERAGE(B2:M2)"]
+    fake_llm.scripted = [
+        make_llm_response(text="Saving it.", tool_calls=[
+            ToolCall(id="s1", name="spreadsheet", input={"op": "write", "path": "units.xlsx", "rows": [
+                ["Product", *[f"M{n}" for n in range(1, 13)], "Average"], row]})]),
+        make_llm_response(text="FINAL: Widget averaged 495.25 units a month, also saved in the workbook."),
+        make_llm_response(text='{"confidence": 0.95, "accepts": true, "critique": "ok", "issues": []}'),
+        make_llm_response(text="FINAL: (no skill)")]
+    world = WorldModel(path=tmp_path / "world.db")
+    gid = world.create_goal("average Widget's monthly units", "", owner="alice")
+
+    await run_goal(llm=fake_llm, world=world, budget=Budget(max_dollars=1.0), goal_id=gid,
+                   sandbox=LocalBackend(workdir=tmp_path), max_depth=1)
+
+    goal = world.get_goal(gid)
+    assert goal.status == "done"
+    assert "495.25 units" in goal.result

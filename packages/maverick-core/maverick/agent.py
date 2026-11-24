@@ -1694,9 +1694,17 @@ def _figure_evidence(messages: list[dict]) -> str:
             typed.append(str(value))
     by_agent = _returned_figures("\n".join(typed))
 
+    def cents(value: Decimal) -> str:
+        # A row of 3-digit cells read as one 39-digit figure is too long to
+        # round to cents; it is no figure anyone gave, so it is left out.
+        try:
+            return str(value.quantize(Decimal("0.01"), ROUND_HALF_UP))
+        except ArithmeticError:
+            return ""
+
     def worked_out(match: re.Match) -> str:
         figures = sorted(_returned_figures(match.group(3)) - by_agent)
-        held = " ".join(str(value.quantize(Decimal("0.01"), ROUND_HALF_UP)) for value in figures)
+        held = " ".join(filter(None, map(cents, figures)))
         return match.group(1) + (f"\nThe file's formulas worked out: {held}" if held else "") + match.group(4)
 
     return _READBACK.sub(worked_out, _verifier_evidence(messages))
