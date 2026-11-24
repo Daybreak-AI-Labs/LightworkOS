@@ -1,0 +1,2252 @@
+[
+{
+"text": "What's the total outstanding on the Acme invoices?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "How much overtime did the warehouse team log in October?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Which tenants are behind on rent this month?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "When does the Main Street lease renew, and what's the notice period?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Reconcile the bank statement against the ledger and tell me what doesn't match.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "What's our gross margin by product line for Q2?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Find any duplicate payments in the vendor ledger.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Who hasn't submitted a timesheet this week?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Calculate the average days to pay for each customer.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "What was net pay for the November 15 payroll run?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Is the security deposit in the lease refundable?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "How many invoices are in the 61-90 day bucket?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Summarize the key terms of the lease in plain English.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Check the sales file for negative quantities.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Tell me the biggest cost increase month over month.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "What are total employer taxes on this payroll register?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Can you check whether the invoice math is right?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "List the top five customers by revenue.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Break down expenses by category for the quarter.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Flag any timesheet entries over 12 hours in a day.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "What is the CAM charge per square foot under the lease?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "How many employees were paid by direct deposit?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Total the hours by project code for last week.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "What's the weighted average interest rate on these loans?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Did any customer pay more than they were invoiced?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Explain why the cash balance dropped in September.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "How many days late is invoice 10432?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Work out the prorated rent for a tenant moving in on the 17th.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "What percentage of sales came from the West region?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Which cost centers went over budget?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "How many rows do we have in the CSV?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Give me the number of rows in the CSV.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "What totals do we have in the PDF?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "I want to know what's in the spreadsheet.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "I need the cost lines that are in the workbook but not in the PDF.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Give me the total from the PDF.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Give me the closing balance from the PDF.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Get me the invoice dates in the PDF.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Do we have the same headcount in the spreadsheet and the Word document?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "I'd like to know what's in the PDF before I sign.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Make me a spreadsheet of hours using the pay rates in the PDF.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Create a CSV of the employees listed in the PDF.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Build a deck from the numbers in the spreadsheet.",
+"files": "S",
+"spreadsheet": null
+},
+{
+"text": "Change the due dates in the spreadsheet to match the PDF.",
+"files": "",
+"spreadsheet": null
+},
+{
+"text": "Format the dates to match the PDF.",
+"files": "",
+"spreadsheet": null
+},
+{
+"text": "Write an email to the vendor about the PDF invoice they sent.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Switch to the PDF version of the lease and check the renewal clause.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Export the hours as a CSV and check them against the PDF timesheets.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Make a spreadsheet of hours and then compare it to the PDF timesheet.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Give me a CSV of the open invoices and the total from the PDF statement.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Did we get the right totals in the PDF?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Can you give me an update on the PDF invoices from Acme?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "What's the latest update to the spreadsheet?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Write a short note on what changed in the Word document.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Write down the totals from the PDF.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Generate a summary of the PDF.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Write a summary of the Word document.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Draft a reply to the email in the PDF.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Compile a list of the vendors in the spreadsheet.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Create a summary of the CSV.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Make a list of the duplicates in the CSV.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Prepare a summary of the PDF bank statement.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Give me a breakdown of the Excel file by department.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Produce an analysis of the spreadsheet's revenue trends.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Give me a summary of the PDF.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Give me a quick summary of the Word document.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Send me a summary of the spreadsheet.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Make a chart from the CSV data.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Would we save money by switching to PDF invoices instead of paper?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Turn to page 4 of the PDF and read me the totals.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "What changed from the draft to the final PDF?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Why did the export to Excel fail?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Can you double-check the total in the PDF you made?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "How do I turn a PDF into a spreadsheet?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Can Excel open a CSV that uses semicolons?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "What's a PPTX file?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Do you think a CSV or an Excel file works better for the bank import?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "What format do you suggest, PDF or Word?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Why is my Excel file showing dates as numbers?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "How many slides should a board deck have?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Where's the CSV export button in Xero?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Why are the totals different between the PDF and the spreadsheet?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Is there a size limit on CSV files you can read?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Can you read scanned PDFs?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "What's the difference between xlsx and xlsm?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Is it okay to send payroll data to the bank as a CSV?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "What should the first slide of my pitch deck say?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "When would you use a PDF instead of a Word document?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Attached is our AR aging as an Excel workbook. What's the total over 60 days?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Here are the October timesheets as PDFs. Who worked the most hours?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "I've uploaded the lease as a Word document. What's the escalation clause?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Enclosed is the bank statement as a PDF; what's the ending balance?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "I'm sending the sales file as an xlsx. Which region grew fastest?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Sharing the payroll register as a CSV. Did anyone get paid twice?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Here's the vendor list as a spreadsheet; how many vendors are in Texas?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "The cost report is attached as a PDF. What drove the overrun?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "These are last month's invoices as Word documents. What's the total billed?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Uploading the board deck now. Does slide 7 match the financials?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "I've attached the pitch deck. Can you review it and give feedback?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Here is the presentation from last week; what were the main takeaways?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Attached: rent roll as Excel. Which units are vacant?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Our accountant sent the trial balance as a PDF. Does it balance?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "The client emailed their timesheets as a spreadsheet. Who's over 40 hours?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "I got the invoices from the vendor as PDFs; which ones are past due?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "We received the bank statement as a CSV. What's the largest withdrawal?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Here's what the landlord sent as a PDF: when is rent due?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Here's the deck we presented last quarter. Summarize the key messages.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Hi, attaching our payroll export as a CSV. What's total gross?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Forwarding the lease as a PDF, what are the tenant's repair obligations?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "We've uploaded the Q3 sales and cost files as spreadsheets. What's the margin?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "I have the timesheets as a PDF. Can you total the hours?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "My bookkeeper keeps the ledger as an Excel file. What's the August balance?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Here's the sales export as a CSV and the cost file as a PDF. What's gross margin by SKU?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "I've attached the timesheets as a PDF and the pay rates as an Excel file. What's total gross pay?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Attached are the lease as a PDF and the rent roll as a spreadsheet; which tenants pay below market?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Hi, I'm sending the invoices as PDFs and the payments as a CSV - which invoices are unpaid?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "We've uploaded the bank statement as a PDF, and the ledger as a CSV. Do they agree?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Here's the aging report we discussed as a PDF. Who owes the most?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Attached is the lease I mentioned as a PDF; when can we terminate early?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "I've uploaded the payroll file that Gusto exported as a CSV. What's total net pay?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Here's the vendor ledger as a CSV, and I'd like to know which vendors we overpaid.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Here are the invoices we sent in March as a CSV. Which are unpaid?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Here's the timesheet you asked for as a PDF. Total the hours per person.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Sending the rent roll as an Excel file so you can check the vacancies.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Here's the sales export as a CSV and the cost file as Excel. Work out gross margin by SKU and give me the results as a spreadsheet.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Export the unpaid invoices to a CSV.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Give me a CSV of employees with more than 40 hours.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Can you put the aging buckets in a CSV for me?",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Pull every transaction over $5,000 into a CSV.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "I need a CSV file of the cleaned vendor list for upload.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Generate a CSV with each tenant's rent and due date.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Dump the payroll deductions to CSV.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Could you output the reconciled items as a CSV?",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "CSV of overdue invoices please.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Can I get a CSV of the hours by employee?",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "I'd like a CSV of all vendor payments in Q3.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Please email me a CSV of the timesheet totals.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Return the deduplicated list as CSV.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Save the results to a CSV file.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Write the cleaned rows to a CSV.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Put the totals in a file called totals.csv.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Save it as aging.csv.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Total the hours per person and also export a CSV.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Give me a summary of the bank statement, plus a CSV of every transaction over $500.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Age the receivables into 0-30, 31-60, 61-90 and 90+ buckets and export as CSV.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Leave out the cancelled invoices and give me the rest as a CSV.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Nothing fancy, just a CSV of the totals.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "No charts, just a CSV of the raw numbers.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Without changing the original, make a cleaned copy as a CSV.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Don't make me a spreadsheet, make me a CSV.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "List the late payers in a CSV.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Provide the vendor balances as a CSV.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "A CSV with invoice number, customer and balance, please.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Export it as a CSV rather than PDF.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Put the bank transactions in a spreadsheet with a running balance.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Make an Excel sheet of payroll by department.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Can you build a workbook with each property's rent roll on its own tab?",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Give me an Excel version of the aging report.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "I need the timesheet totals in Excel.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Create a spreadsheet tracking lease expirations.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Turn the invoice PDFs into an Excel file.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Save the reconciled transactions as an .xlsx.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Export the sales and cost data to Excel with a margin column.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Could I get a spreadsheet of who's over 40 hours?",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Calculate each employee's overtime for October and give me a spreadsheet I can send to payroll.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Build a rent roll spreadsheet from the attached leases.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Compute gross-to-net for each employee and save it as payroll_summary.xlsx.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Find the duplicate invoices and send them to me in a spreadsheet.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Send me the invoice totals by customer and the aging summary in one Excel file.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Not a CSV - I need an Excel file.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Exclude terminated employees and export the payroll as a spreadsheet.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "List the open invoices in a spreadsheet.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Lay out the depreciation schedule in Excel.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Track the lease renewals in a spreadsheet for me.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "An Excel file with one tab per vendor would be ideal.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Write the lease abstract as a Word document.",
+"files": "W",
+"spreadsheet": false
+},
+{
+"text": "Put the variance commentary in a Word doc.",
+"files": "W",
+"spreadsheet": false
+},
+{
+"text": "Draft a Word letter to the tenant about the late rent.",
+"files": "W",
+"spreadsheet": false
+},
+{
+"text": "I need a .docx of the payroll policy summary.",
+"files": "W",
+"spreadsheet": false
+},
+{
+"text": "Create a Word report on the AR aging.",
+"files": "W",
+"spreadsheet": false
+},
+{
+"text": "Can you write up the audit findings in Word?",
+"files": "W",
+"spreadsheet": false
+},
+{
+"text": "Give me an editable Word version of the lease summary.",
+"files": "W",
+"spreadsheet": false
+},
+{
+"text": "Prepare the engagement letter as a Word file.",
+"files": "W",
+"spreadsheet": false
+},
+{
+"text": "Send me the memo in Word format.",
+"files": "W",
+"spreadsheet": false
+},
+{
+"text": "Pull the lease expirations for 2027 into a Word memo for the partners.",
+"files": "W",
+"spreadsheet": false
+},
+{
+"text": "Draft a demand letter for the overdue tenant as a Word document.",
+"files": "W",
+"spreadsheet": false
+},
+{
+"text": "Write the results to summary.docx.",
+"files": "W",
+"spreadsheet": false
+},
+{
+"text": "Draft a termination letter for the tenant.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Write up a collections policy in a Word document we can edit.",
+"files": "W",
+"spreadsheet": false
+},
+{
+"text": "Turn the CSV export into a Word table.",
+"files": "W",
+"spreadsheet": false
+},
+{
+"text": "Convert these slides to a Word handout.",
+"files": "W",
+"spreadsheet": false
+},
+{
+"text": "Put this in a Word doc so I can track changes.",
+"files": "W",
+"spreadsheet": false
+},
+{
+"text": "Make a printable PDF of the rent roll.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Export the timesheet summary to PDF.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Give me the invoice as a PDF I can send to the client.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Generate a PDF statement for each tenant.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "I need a PDF copy of the reconciliation.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Print the aging report to PDF.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Create an invoice PDF for Globex: 20 hours at $125.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Save it as a PDF and I'll forward it to the auditors.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Reconcile the Chase statement to the GL and give me a PDF of the reconciling items.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Make a payroll register PDF for the November 30 run.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Prepare a PDF of all invoices over 90 days with customer contacts.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "I can't open Excel files, so send it as a PDF.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "I can't use a CSV; give me a PDF instead.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Don't email it; save it as a PDF on the task page.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Can you PDF the payroll summary?",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Produce the year-end rent statement as a PDF for each tenant.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "I'd rather have a PDF than a Word doc.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Create a deck summarizing the AR aging for the CFO.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Make a few slides on the payroll variance.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Put together slides for the quarterly business review.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "I need a board presentation on Q3 cash flow.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Build a QBR deck for Acme.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Turn the sales analysis into a PowerPoint.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Create a pptx with one slide per region.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Draft an investor update deck.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Make the lease summary into slides for the property committee.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Can you put the Q3 numbers into a presentation for Monday?",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Prepare a five-slide deck on the budget variance.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "I need a presentation for the leasing team about renewals.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Make me a sales deck with the regional numbers.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Throw together a quick deck on churn for tomorrow.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Could you whip up a presentation on the cost savings?",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Let's do a deck for the board on Q3.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Slides for the board on Q3 cash, please.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "I want a deck I can show the bank.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Make a deck for the bank meeting about the line of credit.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Build a presentation that walks through the payroll changes.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Create a deck in our company template.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Make a 15-slide deck.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Update the board deck with the November numbers.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Redo the investor presentation with the new forecast.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Thanks! Could you put this in a deck for Monday?",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Create a deck summarizing the AR aging, in a clean style, for the CFO.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Make a board deck: Q3 revenue, costs and cash.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Make an onboarding deck for new hires.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Build out a sales presentation for the Acme renewal.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Could you make a presentation of the timesheet findings for HR?",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Make a short presentation, 5 slides max, on the lease portfolio.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Design a slide deck for the investor meeting.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Assemble a deck from the attached charts.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Compile a presentation of the Q3 KPIs for the board.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Make a deck of the Q3 numbers.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Can you make a deck?",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Create a presentation for me.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "I need a deck by Friday.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Need slides ASAP for the board.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Give me 5 slides on the cash forecast.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Add a slide on hiring to the deck.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Make one slide with the KPIs.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Create a title slide for the Q3 deck.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Present the Q3 results to me as slides.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Give me tips for presenting the budget to the board.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "What should I say during the investor presentation?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Help me rehearse my presentation on Q3.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Write a script for my presentation to the board.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Make a presentation outline for the Q3 review.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Prepare talking points for the board presentation.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Give me feedback on my presentation.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Prepare me for the investor presentation on Thursday.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "What's the deadline for the board deck?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "When is the presentation to the leasing committee?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Make sure the deck numbers tie to the financials.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Who is presenting the deck on Monday?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Make a presentation-quality chart of revenue by month.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Write an executive summary for the presentation.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Make me a deck of flashcards for the CPA exam.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Design a deck for our office rooftop with seating for 20.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Give me the presentation date for the Q3 review.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Draft an email inviting the board to the Q3 presentation.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Create an agenda for the presentation on Friday.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "I need a presentation room booked for Tuesday.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Summarize the deck the vendor sent us.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "What does the deck say about churn?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Review the attached deck for errors.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Check the numbers on the board deck against the ledger.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Write speaker notes for each slide of the deck.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Give me a one-line summary for each slide.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Turn your answer into talking points for my presentation.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Create a deck plan for the patio with composite boards.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "What would it cost to build a deck at our new office?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Get three quotes to build a deck behind the restaurant.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Present the results in a table.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Give me a presentation summary in the chat, not slides.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Make the presentation tomorrow less stressful: what should I prepare?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Convert the timesheet PDF to Excel.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Convert the lease from Word to PDF.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Save the rent roll as PDF.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Change the pptx into a PDF.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Make the bank statement PDF into a CSV.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Re-save the workbook as CSV UTF-8.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Turn the Word document into slides.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Export each tab of the workbook as its own CSV.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Convert the xlsx to csv.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Can you convert my PDF bank statement into Excel?",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Convert the PowerPoint to a Word document.",
+"files": "W",
+"spreadsheet": false
+},
+{
+"text": "Turn the invoice spreadsheet into a PDF invoice.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Turn this PDF into an editable Word document.",
+"files": "W",
+"spreadsheet": false
+},
+{
+"text": "Convert the docx to pdf.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Make an Excel copy of the CSV with formulas.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Change the CSV to xlsx.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Convert the scanned receipts PDF into a spreadsheet.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "No need to make slides, just give me the three key points.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Don't create a CSV - just tell me the count.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Please don't send a PDF; paste the table here.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "I don't need a spreadsheet for this, just the total.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "No PDF necessary.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Not a PDF, a Word document please.",
+"files": "W",
+"spreadsheet": false
+},
+{
+"text": "Skip the deck; a one-paragraph summary is enough.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Don't bother making a PowerPoint.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "We don't want this as a PDF.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "No slides - a Word memo is better for this audience.",
+"files": "W",
+"spreadsheet": false
+},
+{
+"text": "I never asked for a PDF, I asked for a CSV.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "No file needed, just the answer in chat.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Don't turn it into slides, a summary is fine.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "There's no need to export to Excel.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "You don't have to make a PDF, but a CSV would help.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Not as slides, as a Word document.",
+"files": "W",
+"spreadsheet": false
+},
+{
+"text": "Rather than a deck, give me a one-page PDF.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "No CSV this time - Excel please.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "I don't want a CSV, I want an Excel file.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "I don't think we need a PDF.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "We no longer need a PDF version.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "I don't need the PDF anymore, a CSV is enough.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Don't give me the totals as a PDF.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Never send me the payroll as a PDF.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Please stop making slides for this.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "A PDF or Word doc of the lease summary is fine.",
+"files": "PW?",
+"spreadsheet": false
+},
+{
+"text": "Give me the overdue list as CSV or PDF, your call.",
+"files": "CP?",
+"spreadsheet": false
+},
+{
+"text": "Word or PDF, whichever is easier, for the policy summary.",
+"files": "WP?",
+"spreadsheet": false
+},
+{
+"text": "Should the board pack be a PDF or slides?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Send the aging report as Excel or PDF.",
+"files": "P?",
+"spreadsheet": null
+},
+{
+"text": "Either a CSV or an Excel file is fine for the export.",
+"files": "C?",
+"spreadsheet": false
+},
+{
+"text": "I'd like slides or a PDF for the Q3 review.",
+"files": "SP?",
+"spreadsheet": false
+},
+{
+"text": "Can you export it as CSV, or Excel if that's easier?",
+"files": "C?",
+"spreadsheet": false
+},
+{
+"text": "Can I have it in Word or PDF?",
+"files": "WP?",
+"spreadsheet": false
+},
+{
+"text": "Give me a CSV of the transactions, an Excel summary by category, and a PDF for the auditors.",
+"files": "CP",
+"spreadsheet": false
+},
+{
+"text": "I need three things: a Word memo, a PDF of the schedule, and slides for the board.",
+"files": "WPS",
+"spreadsheet": false
+},
+{
+"text": "Make a PDF and a Word version of the lease abstract.",
+"files": "PW",
+"spreadsheet": false
+},
+{
+"text": "Create the payroll summary as a PDF plus a CSV for the bank.",
+"files": "PC",
+"spreadsheet": false
+},
+{
+"text": "Export the invoices to CSV, then build a deck on the aging.",
+"files": "CS",
+"spreadsheet": false
+},
+{
+"text": "Send me the rent roll as Excel and the lease summary as a Word doc.",
+"files": "W",
+"spreadsheet": true
+},
+{
+"text": "Produce slides for the board and a PDF handout.",
+"files": "SP",
+"spreadsheet": false
+},
+{
+"text": "Give me both a CSV and a PDF of the reconciliation.",
+"files": "CP",
+"spreadsheet": false
+},
+{
+"text": "Deliverables: CSV of exceptions, PDF memo.",
+"files": "CP",
+"spreadsheet": false
+},
+{
+"text": "Please provide a Word document and a PowerPoint for the client.",
+"files": "WS",
+"spreadsheet": false
+},
+{
+"text": "I'd like a PDF report and an Excel backup of the numbers.",
+"files": "P",
+"spreadsheet": true
+},
+{
+"text": "Make a spreadsheet of the hours, a CSV for the payroll upload, and a PDF summary.",
+"files": "CP",
+"spreadsheet": false
+},
+{
+"text": "Put the totals in a CSV and the commentary in a Word doc.",
+"files": "CW",
+"spreadsheet": false
+},
+{
+"text": "I need the payroll in Excel and in PDF.",
+"files": "P",
+"spreadsheet": true
+},
+{
+"text": "Great, now make that a PDF.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Can you also give me it as a Word doc?",
+"files": "W",
+"spreadsheet": false
+},
+{
+"text": "Perfect - export that to CSV too.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Same thing but as slides.",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "Now do the same for October and send it as a spreadsheet.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Ok, the PDF looks good. Now the Word version please.",
+"files": "W",
+"spreadsheet": false
+},
+{
+"text": "That's fine, no file needed.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Yes please make the spreadsheet.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Yes, a CSV would be great.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Option 2, the PDF.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Go with Excel.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Just the CSV is fine.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Actually make it a Word document instead.",
+"files": "W",
+"spreadsheet": false
+},
+{
+"text": "Can you redo it as a PDF?",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "No, I meant as an Excel file, not a CSV.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Looks good. Send the final version as a PDF.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Please attach the spreadsheet you mentioned.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Where's the CSV? I don't see it.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "You forgot the PDF.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Thanks, that's all I needed.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Same, but in Excel.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Now in PDF please.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "And as a PDF too.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Also a CSV.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Could you send that over as a Word doc?",
+"files": "W",
+"spreadsheet": false
+},
+{
+"text": "The PDF please.\n\nThis message replies to the question you asked before it: Do you want the summary as a CSV or as a PDF?",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "No file, just tell me in chat.\n\nThis message replies to the question you asked before it: Should I save this as a spreadsheet or a PDF? Options: 1. As a spreadsheet 2. As a PDF",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Make it a PDF.\n\nThis message replies to the question you asked before it: Which format would you like? 1. As a CSV file 2. As a PDF",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Hi team, attached are the October timesheets for the warehouse crew. Please calculate regular and overtime hours for each person (over 40 in a week is overtime), apply the pay rates in the rates file, and give me a spreadsheet I can hand to payroll. Also flag anyone who clocked more than 12 hours in a day.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "We're closing the books for Q3. Reconcile the Chase operating account statement (PDF attached) to the GL detail (CSV attached), list the reconciling items, and send me the reconciliation as a PDF for the controller.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Our landlord sent over the renewal lease as a PDF. Can you pull out the rent schedule, escalations, and any CAM caps, and put them in a Word memo I can share with the partners?",
+"files": "W",
+"spreadsheet": false
+},
+{
+"text": "Attached is the AR aging as of Oct 31. Can you build a short deck for Tuesday's leadership meeting showing the over-90 balances by customer and what we're doing to collect?",
+"files": "S",
+"spreadsheet": false
+},
+{
+"text": "I need to prepare for my presentation to the bank on Thursday. Can you summarize our debt covenants and cash position in a few bullet points?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Here are this month's bank statements for both accounts. Match each deposit to an invoice in the AR ledger, tell me which invoices are still open, and give me the open ones as a CSV so I can send reminders.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Using the attached payroll register and the timesheets in the PDF, check that everyone was paid for the hours they worked and tell me about any differences.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "The board meets Monday. I need a one-page PDF summary of Q3 results and a five-slide deck covering revenue, margin, cash and headcount.",
+"files": "PS",
+"spreadsheet": false
+},
+{
+"text": "I've uploaded the lease, the rent roll and the CAM reconciliation. Is the tenant being billed correctly under section 4.2? Please explain in plain language; no file needed.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Here's the cost file from our supplier as a PDF and our sales file as a CSV. What's our margin per product, and which products lose money?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Give me the open invoices as a CSV.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Export the open AR items as a CSV.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Send me all open purchase orders as a spreadsheet.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Put the open invoices into a spreadsheet.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "List the open balances by customer as a PDF.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Save the open orders as an Excel file.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Give me the open items from the bank reconciliation as a CSV.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Export open tickets as CSV.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Pull the open invoices over 60 days into a spreadsheet for collections.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "Give me the import file as a CSV for QuickBooks.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Prepare the payroll import as a CSV.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Give me a view of overdue invoices as a PDF.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Give me the open POs and their amounts as a PDF report.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Export the reconciliation's open items as a PDF.",
+"files": "P",
+"spreadsheet": false
+},
+{
+"text": "Send the open shifts for next week as a Word document.",
+"files": "W",
+"spreadsheet": false
+},
+{
+"text": "Put all the open job orders into a CSV.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Return the still-open invoices as a CSV.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Give me the open invoices as a CSV and the paid ones as a PDF.",
+"files": "CP",
+"spreadsheet": false
+},
+{
+"text": "Give me the unpaid invoices as a CSV.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Put the unpaid invoices into a spreadsheet.",
+"files": "",
+"spreadsheet": true
+},
+{
+"text": "I need to know which invoices in the PDF are unpaid.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "We have three employees in the spreadsheet with no hire date; who are they?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "What do we have in the CSV for March?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "I want the total of column D in the spreadsheet.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Do we have any duplicate invoice numbers in the CSV?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "I'd like the totals in the PDF checked against the ledger.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Can you give me the totals in the Excel file?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Please share the key dates in the Word document.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Can you get the balance in the PDF?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "We need the numbers in the PDF to tie out.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Give me a list of the vendors in the CSV.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Make sure the totals in the PDF match.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Give me the variance between the totals in the CSV and the PDF.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "I have a question about the rates in the PDF.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Prepare a variance analysis of the numbers in the spreadsheet.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Create a summary of the expenses in the CSV.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Build a forecast from the history in the spreadsheet.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Give me the headcount in the Excel file by department.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "I want to check the hours in the CSV against the schedule.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Send me the three biggest invoices in the PDF.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Get me the customer names in the CSV that have no email.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Make me a list of the errors in the spreadsheet.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Give me an overview of the PDF.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Make a summary of the PDF.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Write a recap of the spreadsheet.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Prepare an analysis of the CSV.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Send me the totals of the PDF.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Give me the gist of the Word document.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Give me the rent from the PDF.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Give me the totals from the CSV.",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Send me the aging in Excel and as a PDF.",
+"files": "P",
+"spreadsheet": true
+},
+{
+"text": "Give me the totals in a spreadsheet and in a PDF.",
+"files": "P",
+"spreadsheet": true
+},
+{
+"text": "Export the payroll to Excel and to PDF.",
+"files": "P",
+"spreadsheet": true
+},
+{
+"text": "I want it as a spreadsheet and as a PDF.",
+"files": "P",
+"spreadsheet": true
+},
+{
+"text": "Send me a CSV in Excel format.",
+"files": "C",
+"spreadsheet": false
+},
+{
+"text": "Here's the March statement as a PDF and the April one as a CSV. What changed?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Attached are the timesheets as a PDF and the rates as a CSV; what is total pay?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "I've uploaded the invoices as a CSV and the payments as an Excel file. Which invoices are open?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Here's the lease you asked about as a PDF. When does it end?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Here is the payroll report I mentioned as a PDF. What is total gross?",
+"files": "",
+"spreadsheet": false
+},
+{
+"text": "Attached is the deck we presented as a PDF. What were the key numbers?",
+"files": "",
+"spreadsheet": false
+}
+]
