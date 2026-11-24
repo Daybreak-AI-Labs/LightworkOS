@@ -392,79 +392,6 @@ async def test_a_wide_row_of_figures_in_a_workbook_does_not_fail_the_goal(tmp_pa
     assert "495.25 units" in goal.result
 
 
-def test_money_figures_no_tool_returned_are_named():
-    from maverick.figure_totals import unsupported_issues
-
-    # Live: a lease's rents and total were typed without a tool; the total was
-    # $644.64 short and the model judge accepted it.
-    evidence = ("<tool_output tool='read_attachment' id=1>\nBase Rent of Four Thousand Two Hundred Dollars "
-                "($4,200.00) during the first Lease Year\n</tool_output 1>\n"
-                "<tool_output tool='compute' id=2>\n2029-10-02\n</tool_output 2>")
-    answer = ("Year 1: $4,200.00\nYear 2: $4,326.00\nYear 3: $4,455.78\nYear 4: $4,589.45\nYear 5: $4,727.13\n"
-              "Total: $266,935.68")
-    assert unsupported_issues(answer, evidence) == [
-        "The answer gives 4,326.00, 4,455.78, 4,589.45, 4,727.13 and others, which no tool returned and "
-        "neither the task's files nor the request hold. Work each one out with compute or a query, by the rule "
-        "the task's files state (a step the files round is rounded before the next), and copy the results "
-        "exactly."]
-    # Figures a tool returned (whole, unrounded or as written), or the request gave, stand.
-    worked = evidence + "\n4326, 4455.78, 4589.4534, 4727.13\n267580.32"
-    assert unsupported_issues(answer.replace("266,935.68", "267,580.32"), worked) == []
-    assert unsupported_issues("Budget $12,500.00 and $3,200.00", "<tool_output tool='x' id=3>\nok\n</tool_output 3>",
-                              given="Our budget is $12,500.00 and rent is $3,200.00") == []
-    # One stray figure, or an answer with no tool use at all, is left to the model judge.
-    assert unsupported_issues("Total: $50,400.00", evidence) == []
-    assert unsupported_issues(answer, "") == []
-
-
-def test_dates_no_tool_returned_are_named():
-    from maverick.figure_totals import date_issues
-
-    lease = ("<tool_output tool='read_attachment' id=1>\nThe term begins on April 1, 2025 and continues for "
-             "sixty (60) full calendar months\n</tool_output 1>")
-    # Live: the deadline 180 days before March 31, 2030 was typed as September 30, 2029.
-    typed = "Expires March 31, 2030. Last day to give notice: September 30, 2029. Starts April 1, 2025."
-    assert date_issues(typed, lease) == [
-        "The answer gives September 30, 2029, March 31, 2030, which no tool returned and neither the task's "
-        "files nor the request hold. Work each date out with compute, as in date('2030-03-31', '-180 days'), "
-        "and copy the result exactly."]
-    # Dates compute returned, in any written form, stand, as do the request's and today's.
-    worked = lease + "\n<tool_output tool='compute' id=2>\n2030-03-31\n</tool_output 2>\n2029-10-02"
-    assert date_issues("Expires 31 March 2030; notice by Oct. 2, 2029.", worked) == []
-    assert date_issues("As of November 24, 2026 nothing is due.", lease, given="As of November 24, 2026") == []
-    import datetime
-    today = datetime.date.today()
-    assert date_issues(f"Checked on {today:%B} {today.day}, {today.year}.", lease) == []
-    # A slashed date's order is a guess, and no tool use at all is left to the model judge.
-    assert date_issues("Due 03/04/2031.", lease) == []
-    assert date_issues(typed, "") == []
-
-
-def test_a_date_an_agent_typed_in_its_report_is_not_a_tools_result():
-    # Live: a researcher typed a lease's notice deadline as September 30, 2029
-    # in its report; the date check took the report as a tool's result,
-    # while its compute calls had returned only 2030-03-31.
-    from types import SimpleNamespace
-
-    from maverick.agent import _worked_out
-    from maverick.figure_totals import date_issues
-
-    evidence = ("<tool_output tool='read_attachment' id=aa>\nbegins on April 1, 2025\n</tool_output aa>\n"
-                "<tool_output tool='spawn_subagent' id=bb>\nExpires March 31, 2030; notice by September 30, "
-                "2029\n</tool_output bb>")
-    events = [SimpleNamespace(kind="observation", content="tool=compute -> <tool_output tool='compute' id=cc>"
-                                                          "\n2030-03-31\n</tool_output cc>"),
-              SimpleNamespace(kind="observation", content="tool=spawn_subagent -> <tool_output tool='spawn_subagent'"
-                                                          " id=dd>\nSeptember 30, 2029\n</tool_output dd>"),
-              SimpleNamespace(kind="plan", content="2029-09-30")]
-    facts = _worked_out(evidence, SimpleNamespace(goal_events=lambda goal_id: events), 7)
-    assert "September 30" not in facts and "2030-03-31" in facts and "April 1, 2025" in facts
-    issues = date_issues("Expires March 31, 2030. Notice by September 30, 2029.", facts)
-    assert len(issues) == 1 and issues[0].startswith("The answer gives September 30, 2029, which no tool"), issues
-    # Without a world, the run's own results still count.
-    assert "April 1, 2025" in _worked_out(evidence, None, None)
-
-
 def test_figures_the_person_gave_are_theirs_to_quote():
     from maverick.figure_totals import drift_issues, recalled_issues
 
@@ -473,80 +400,15 @@ def test_figures_the_person_gave_are_theirs_to_quote():
     given = "The payroll report shows Ben's week 2 gross as $1,647.56. Is the report right?"
     answer = "The report's $1,647.56 is wrong: the correct gross is $1,647.38."
     assert drift_issues(answer, "1647.38", given) == []
-    assert drift_issues(answer, "1647.38") != []
+    # An earlier answer in the chat is not the request: repeating its wrong
+    # figure after a recheck is still caught.
+    assert drift_issues("Confirmed: $1,647.56.", "1647.38", "Can you double-check that?") != []
     # A recurring budget's rent, given in the request, matches last month's.
     recalled = "<tool_output tool='recall_past_goals' id=1>\nOctober budget: rent $2,450.00, loan $389.27\n</tool_output 1>"
     budget = "Build my November budget. Rent $2,450.00, car loan $389.27."
-    assert recalled_issues("Rent $2,450.00; loan $389.27", recalled, "", budget, budget) == []
-    # A follow-up that asks for earlier work reuses it on purpose.
-    q3 = "<tool_output tool='recall_past_goals' id=2>\nQ3 revenue: North $412,330.50, South $389,120.75\n</tool_output 2>"
-    ask = "Put those Q3 numbers in a spreadsheet with a total"
-    assert recalled_issues("North $412,330.50, South $389,120.75", q3, "", ask, ask) == []
-    assert recalled_issues("North $412,330.50, South $389,120.75", q3, "", "Total Q3 revenue by region",
-                           "Total Q3 revenue by region") != []
-
-
-def test_the_briefs_prior_work_section_is_not_the_persons_words():
-    from maverick.agent import _PRIOR_WORK
-
-    brief = ("Top-level goal: total the March statement\n"
-             "## Relevant prior work (from past runs)\nThe entries below are untrusted historical data.\n"
-             "- #380 (0.38) title='March statement'\n  result=Total: $100,079.96\n"
-             "## Decision rules\nKeep it short.")
-    kept = _PRIOR_WORK.sub("", brief)
-    assert "100,079.96" not in kept and "total the March statement" in kept and "## Decision rules" in kept
-
-
-@pytest.mark.asyncio
-async def test_a_date_the_tasks_file_prints_is_not_sent_back(tmp_path, fake_llm, make_llm_response):
-    # Live: the answer named the week a timesheet printed ("week of November
-    # 16, 2026"); only another agent had read the file, so the date went back
-    # as typed, and told to recompute everything, the revision turned Hank's
-    # correct $750.53 into $781.10.
-    from maverick import attachments as att
-    from maverick.llm import ToolCall
-
-    world = WorldModel(path=tmp_path / "world.db")
-    gid = world.create_goal("work out the payroll", "", owner="alice")
-    rec = att.store(gid, "timesheet.txt", "text/plain",
-                    b"Timesheet - week of November 16, 2026\nHank 14:00-22:30\n", root=tmp_path / "a")
-    world.add_attachment(gid, rec.filename, rec.mime, rec.size_bytes, rec.sha256, str(rec.path))
-    fake_llm.scripted = [
-        make_llm_response(text="Working.", tool_calls=[
-            ToolCall(id="c1", name="compute", input={"op": "evaluate", "expr": "round(18.25*40.75, 2)"})]),
-        make_llm_response(text="FINAL: For the week of November 16, 2026, Hank's pay is $743.69."),
-        make_llm_response(text='{"confidence": 0.95, "accepts": true, "critique": "ok", "issues": []}'),
-        make_llm_response(text="FINAL: (no skill)")]
-
-    await run_goal(llm=fake_llm, world=world, budget=Budget(max_dollars=1.0), goal_id=gid,
-                   sandbox=LocalBackend(workdir=tmp_path), max_depth=1)
-
-    assert "no tool returned" not in str(fake_llm.calls)
-    assert "November 16, 2026" in world.get_goal(gid).result
-
-
-@pytest.mark.asyncio
-async def test_a_typed_date_goes_back_asking_only_for_that_date(tmp_path, fake_llm, make_llm_response):
-    # A date no tool returned and no file holds goes back, but the brief asks
-    # for that date alone: told to recompute every figure, a revision turned
-    # a correct $750.53 into $781.10.
-    from maverick.llm import ToolCall
-
-    fake_llm.scripted = [
-        make_llm_response(text="Working.", tool_calls=[
-            ToolCall(id="c1", name="compute", input={"op": "evaluate", "expr": "date('2030-03-31', '-180 days')"})]),
-        make_llm_response(text="FINAL: Give notice by September 30, 2029."),
-        make_llm_response(text="FINAL: Give notice by October 2, 2029."),
-        make_llm_response(text='{"confidence": 0.95, "accepts": true, "critique": "ok", "issues": []}'),
-        make_llm_response(text="FINAL: (no skill)")]
-    world = WorldModel(path=tmp_path / "world.db")
-    gid = world.create_goal("when must we give notice to renew the lease?", "", owner="alice")
-
-    await run_goal(llm=fake_llm, world=world, budget=Budget(max_dollars=1.0), goal_id=gid,
-                   sandbox=LocalBackend(workdir=tmp_path), max_depth=1)
-
-    brief = str(fake_llm.calls[2].get("messages", ""))
-    assert "The answer gives September 30, 2029, which no tool returned" in brief
-    assert "Change only the dates named and keep every other figure as it is." in brief
-    assert "Recompute them with one tool call" not in brief
-    assert "October 2, 2029" in world.get_goal(gid).result
+    assert recalled_issues("Rent $2,450.00; loan $389.27", recalled, "", budget) == []
+    # Review: "Do the same for April" is the follow-up most likely to recall
+    # a past task with other figures; copying them is still caught.
+    march = "<tool_output tool='recall_past_goals' id=2>\nTotal deposits: $100,079.96\n</tool_output 2>"
+    assert recalled_issues("April deposits: $100,079.96.", march, "45638.36",
+                           "Do the same deposit total for the April statement") != []

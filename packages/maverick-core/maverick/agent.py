@@ -1753,7 +1753,6 @@ def _observation_post(output: str, limit: int = _OBSERVATION_POST_CHARS) -> str:
 
 
 _VERIFIER_EVIDENCE_CHARS = 12_000
-_ALL_EVIDENCE_CHARS = 4_000_000
 
 
 _REFUSALS = ("not approved", "is denied by the current tool acl")
@@ -1886,7 +1885,7 @@ _READBACK = re.compile(r"(<tool_output tool='spreadsheet' id=([0-9a-f]+)>\n(?:(?
                        r"(\nWhat the file now holds.*?)(\n</tool_output \2>)", re.DOTALL)
 
 
-def _figure_evidence(messages: list[dict], limit: int = _VERIFIER_EVIDENCE_CHARS) -> str:
+def _figure_evidence(messages: list[dict]) -> str:
     """The run's tool results for the figure checks, each spreadsheet write's
     read-back cut to the figures the file's formulas worked out, in cents. A
     read-back repeats what the agent typed into the file, so a typed figure
@@ -1925,33 +1924,7 @@ def _figure_evidence(messages: list[dict], limit: int = _VERIFIER_EVIDENCE_CHARS
         held = " ".join(filter(None, map(cents, figures)))
         return match.group(1) + (f"\nThe file's formulas worked out: {held}" if held else "") + match.group(4)
 
-    return _READBACK.sub(worked_out, _verifier_evidence(messages, limit))
-
-
-# The brief's section of past runs' results (orchestrator._maybe_recall_prior_work).
-_PRIOR_WORK = re.compile(r"\n## Relevant prior work \(from past runs\)\n.*?(?=\n## |\Z)", re.DOTALL)
-
-# Tools whose results are another agent's own report, typed, not worked out.
-_AGENT_REPORTS = ("spawn_subagent", "spawn_swarm", "spawn_specialist", "delegate_to_agent", "recv_from_agent")
-_REPORT_FRAME = re.compile(rf"<tool_output tool='(?:{'|'.join(_AGENT_REPORTS)})' id=([0-9a-f]+)>.*?</tool_output \1>",
-                           re.DOTALL)
-
-
-def _worked_out(evidence: str, world, goal_id) -> str:
-    """``evidence`` without the reports agents wrote to each other, plus the
-    tool results every agent of the goal posted (each cut to its first 500
-    characters). Live: a researcher typed a lease's notice deadline as
-    September 30, 2029 in its report, and the date check took the report as
-    a tool's result; its compute calls had returned only 2030-03-31."""
-    parts = [_REPORT_FRAME.sub("", evidence)]
-    if world is not None and goal_id is not None:
-        try:
-            parts += [event.content for event in world.goal_events(goal_id)
-                      if event.kind == "observation" and not event.content.startswith(
-                          tuple(f"tool={name} " for name in _AGENT_REPORTS))]
-        except Exception:  # noqa: BLE001 -- the date check never blocks an answer
-            pass
-    return "\n".join(parts)
+    return _READBACK.sub(worked_out, _verifier_evidence(messages))
 
 
 def _tool_result_limit(model: str | None = None) -> int:
@@ -6606,61 +6579,26 @@ class Agent:
         # grand total was a dollar off and the model judge let it through.
         # A figure typed with its cents garbled (the tools returned 1,647.38,
         # the answer said 1,647.56) goes back the same way.
-        from .figure_totals import (
-            answer_issues,
-            date_issues,
-            drift_issues,
-            percent_issues,
-            recalled_issues,
-            unsupported_issues,
-        )
+        from .figure_totals import answer_issues, drift_issues, percent_issues, recalled_issues
         # What a write put in a file is the agent's own typing, not a tool's
         # result, but what the file's formulas worked out is; the model
-        # verifier below still sees the whole read-back. Money figures and
-        # dates no tool returned go back too: a lease's typed total was
-        # $644.64 short, and its typed notice deadline two days early.
+        # verifier below still sees the whole read-back.
         evidence = _figure_evidence(st.messages)
-        # Figures and dates no tool returned are looked for in every result,
-        # not the newest 12,000 characters: an early compute call fell out of
-        # that window and its date went back as typed.
-        everything = _figure_evidence(st.messages, limit=_ALL_EVIDENCE_CHARS)
         recalled = "\n".join(match.group(0) for match in _RECALLED.finditer(evidence))
-        # What the person gave (the task, and in a chat the answer before)
-        # is theirs to quote: the brief holds both. Its prior-work section,
-        # past runs' results, is not theirs.
+        # Figures the person's request states are theirs to quote ("the report
+        # shows $1,647.56"); an earlier answer in the chat is not, so a wrong
+        # figure repeated from it is still caught.
         request = self._skill_query()
-        given = f"{request}\n{_PRIOR_WORK.sub('', self.brief or '')}"
-        worked = _worked_out(everything, self.ctx.world, self.ctx.goal_id)
-        typed = unsupported_issues(final, everything, given)
-        dates = date_issues(final, worked, given)
-        if typed or dates:
-            # Before calling a figure or a date typed, read the task's own
-            # files: another agent may have read them, and its results are
-            # kept only in part.
-            try:
-                from .tools.attachments import task_files_text
-                files = task_files_text(self.ctx.world, self.ctx.goal_id, self.ctx.sandbox)
-            except Exception:  # noqa: BLE001 -- the checks never block an answer
-                files = ""
-            given = f"{given}\n{files}"
-            typed = unsupported_issues(final, everything, given) if typed else []
-            dates = date_issues(final, worked, given) if dates else []
-        figures = (answer_issues(final) + drift_issues(final, evidence, given) + percent_issues(final)
-                   + recalled_issues(final, recalled, _RECALLED.sub("", evidence), given, request) + typed)
-        if figures or dates:
+        if issues := (answer_issues(final) + drift_issues(final, evidence, request) + percent_issues(final)
+                      + recalled_issues(final, recalled, _RECALLED.sub("", evidence), request)):
             from .verifier import VerifierVerdict
-            critique = []
-            if figures:
-                critique += ["The totals do not add up or the figures do not match the tools.", *figures,
-                             "Recompute them with one tool call over this task's data and copy the results "
-                             "exactly into every place they appear."]
-            if dates:
-                # A date alone asks for that date: told to recompute every
-                # figure, a revision turned a correct $750.53 into $781.10.
-                critique += [*dates, "Change only the dates named and keep every other figure as it is."]
             verification.attempted = True
             verification.verdict = VerifierVerdict(
-                confidence=0.0, accepts=False, issues=figures + dates, critique=" ".join(critique))
+                confidence=0.0, accepts=False, issues=issues,
+                critique="The totals do not add up or the figures do not match the tools. "
+                + " ".join(issues)
+                + " Recompute them with one tool call over this task's data and copy the results "
+                "exactly into every place they appear.")
             return self._verifier_rejection(st, final, verification.verdict, coding_cfg)
         if (
             _risk_proportional_verify_enabled()

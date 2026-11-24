@@ -274,12 +274,7 @@ def drift_issues(answer: str, evidence: str, given: str = "") -> list[str]:
     return issues[:MAX_ISSUES]
 
 
-# Words that send the agent back to earlier work on purpose.
-_REFERS_BACK = re.compile(r"\b(?:those|the\s+same|last\s+(?:time|month|week|quarter|year)|previous(?:ly)?|earlier"
-                          r"|again|from\s+before|you\s+(?:gave|sent|made|did|found|worked\s+out))\b", re.IGNORECASE)
-
-
-def recalled_issues(answer: str, recalled: str, evidence: str, given: str = "", request: str = "") -> list[str]:
+def recalled_issues(answer: str, recalled: str, evidence: str, given: str = "") -> list[str]:
     """Figures in ``answer`` found in a past task's recalled result and in
     nothing this run's other tools returned.
 
@@ -288,10 +283,8 @@ def recalled_issues(answer: str, recalled: str, evidence: str, given: str = "", 
     different file, which recall_past_goals had shown as done."""
     # A whole amount counts too: compute returned 4326 for a lease's second
     # year, and the answer's $4,326.00 went back as copied from a past task.
-    # The person's own figures, and a request that asks for earlier work
-    # ("Put those Q3 numbers in a spreadsheet"), are not copied by mistake.
-    if _REFERS_BACK.search(request or ""):
-        return []
+    # The person's own figures (a recurring budget's rent, stated in the
+    # request) are not copied by mistake.
     past = _cents_figures(recalled) - _returned_figures(evidence) - _whole_figures(evidence) - _given_figures(given)
     issues = [f"The answer gives {_money(value, 2)}, which comes from a past task's result, not from "
               "this task's data." for value in sorted(_cents_figures(answer) & past)][:MAX_ISSUES]
@@ -301,88 +294,6 @@ def recalled_issues(answer: str, recalled: str, evidence: str, given: str = "", 
         issues[-1] += (" Take each figure from this task's own files, reading a file's text where a "
                        "query's table does not hold it.")
     return issues
-
-
-def unsupported_issues(answer: str, evidence: str, given: str = "") -> list[str]:
-    """Money figures in ``answer`` that no tool returned, no file read holds
-    and the request (``given``) does not state, when there are two or more.
-
-    Live: a lease's rents for years two to five and the total over the term
-    were typed without a tool call; the total was $644.64 short, and the
-    model judge accepted it. A figure the tools returned with more decimals
-    and the answer rounds to cents is the tool's own."""
-    if not evidence.strip():
-        return []
-    known = (_returned_figures(evidence) | _whole_figures(evidence) | _cents_figures(evidence)
-             | _returned_figures(given) | _whole_figures(given) | _cents_figures(given))
-    rounded = {_cents(value) for value in known} - {None}
-    missing = [value for value in sorted(_cents_figures(answer)) if value not in known and value not in rounded]
-    if len(missing) < 2:
-        return []
-    shown = ", ".join(_money(value, 2) for value in missing[:4]) + (" and others" if len(missing) > 4 else "")
-    # Told only to compute them, a revision swapped a lease's correctly
-    # compounded rent (each year rounded, as the lease says) for 4,200 x 1.03^4.
-    return [f"The answer gives {shown}, which no tool returned and neither the task's files nor the request "
-            "hold. Work each one out with compute or a query, by the rule the task's files state (a step the "
-            "files round is rounded before the next), and copy the results exactly."]
-
-
-_MONTH_NAMES = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
-_MONTH = (r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?"
-          r"|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?")
-_MONTH_FIRST = re.compile(rf"\b{_MONTH}\s+(\d{{1,2}})(?:st|nd|rd|th)?,?\s+(\d{{4}})\b", re.IGNORECASE)
-_DAY_FIRST = re.compile(rf"\b(\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?{_MONTH},?\s+(\d{{4}})\b", re.IGNORECASE)
-_ISO_DATE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
-_SLASHED = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b")
-
-
-def _dates(text: str, *, slashed: bool = True) -> set:
-    """Every calendar date ``text`` writes: March 31, 2030, 31 March 2030,
-    2030-03-31, and (when ``slashed``) 03/31/2030 read both ways."""
-    import datetime
-
-    found = set()
-
-    def add(year, month, day) -> None:
-        try:
-            found.add(datetime.date(int(year), int(month), int(day)))
-        except ValueError:
-            pass
-
-    for month, day, year in _MONTH_FIRST.findall(text or ""):
-        add(year, _MONTH_NAMES.index(month[:3].lower()) + 1, day)
-    for day, month, year in _DAY_FIRST.findall(text or ""):
-        add(year, _MONTH_NAMES.index(month[:3].lower()) + 1, day)
-    for year, month, day in _ISO_DATE.findall(text or ""):
-        add(year, month, day)
-    if slashed:
-        for first, second, year in _SLASHED.findall(text or ""):
-            add(year, first, second)
-            add(year, second, first)
-    return found
-
-
-def date_issues(answer: str, evidence: str, given: str = "") -> list[str]:
-    """Dates in ``answer`` that no tool returned, no file read holds and the
-    request does not state (today's date always stands).
-
-    Live: a lease's renewal notice deadline, 180 days before March 31, 2030,
-    was typed as September 30, 2029 (it is October 2) and the model judge
-    accepted it. Dates written 03/04/2026 are left out: their order is the
-    reader's guess."""
-    import datetime
-
-    if not evidence.strip():
-        return []
-    known = _dates(evidence) | _dates(given) | {datetime.date.today()}
-    missing = sorted(_dates(answer, slashed=False) - known)
-    if not missing:
-        return []
-    shown = ", ".join(f"{day:%B} {day.day}, {day.year}" for day in missing[:4]) + (
-        " and others" if len(missing) > 4 else "")
-    return [f"The answer gives {shown}, which no tool returned and neither the task's files nor the request "
-            "hold. Work each date out with compute, as in date('2030-03-31', '-180 days'), and copy the "
-            "result exactly."]
 
 
 _PERCENT = re.compile(r"(?<![\d.])(\d{1,2}(?:\.\d{1,4})?)\s?%")
