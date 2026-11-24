@@ -165,7 +165,10 @@ def read_attachment_tool(world, goal_id: int | None, sandbox=None) -> Tool:
                      "`SELECT name, ROUND(rate*(MIN(hours,40)+MAX(hours-40,0)*1.5),2) AS pay "
                      "FROM data` or `SELECT dept, SUM(amount) FROM data GROUP BY dept`. "
                      "Before filtering on a column, look at the values it actually holds "
-                     "(`SELECT DISTINCT receipt FROM data`): a missing receipt may be 'no', not blank."),
+                     "(`SELECT DISTINCT receipt FROM data`): a missing receipt may be 'no', not blank. "
+                     "When the request defines a condition (overdue = past its due date and not "
+                     "paid), filter on the fields it names, not on a status or label column, "
+                     "which can be out of date."),
         input_schema={"type": "object",
                       "properties": {"id": {"type": "integer"},
                                      "sql": {"type": "string",
