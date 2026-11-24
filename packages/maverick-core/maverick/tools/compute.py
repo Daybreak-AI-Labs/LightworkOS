@@ -41,7 +41,8 @@ _COMPUTE_SCHEMA: dict[str, Any] = {
         },
         "expr": {
             "type": "string",
-            "description": "The expression. Examples: 'sin(pi/4)', 'x**2 + 3*x', '1000*(1+0.05/12)^(-60)' (^ is power).",
+            "description": ("The expression. Examples: 'sin(pi/4)', 'x**2 + 3*x', '1000*(1+0.05/12)^(-60)' (^ is power), "
+                            "'sum([4850.00, -1245.60, 2317.45])' to add a list of figures."),
         },
         "equation": {
             "type": "string",
@@ -219,11 +220,27 @@ def _safe_parse_expr(expr: str, *, evaluate: bool, exact: bool = False):
 
 _VALID_OPS = {"evaluate", "simplify", "solve", "diff", "integrate"}
 
+# "sum([a, b, c])" or "sum(a, b, c)" over plain figures, as models write a
+# total: a reconciliation's sum of a list was refused as "disallowed
+# characters" and the retyped addition left two entries out.
+_SUM_CALL = re.compile(r"\bsum\(\s*(?:\[([^\[\]()]*)\]|([^\[\]()]*))\s*\)")
+
+
+def _sums_as_additions(expr: str) -> str:
+    def added(match: re.Match) -> str:
+        items = [item.strip() for item in (match.group(1) if match.group(1) is not None
+                                           else match.group(2)).split(",")]
+        items = [item for item in items if item]
+        return "(" + "+".join(f"({item})" for item in items) + ")" if items else "(0)"
+
+    return _SUM_CALL.sub(added, expr)
+
 
 def _run_evaluate(args: dict[str, Any]) -> str:
     expr = str(args.get("expr") or "").strip()
     if not expr:
         return "ERROR: evaluate requires expr"
+    expr = _sums_as_additions(expr)
     try:
         if _have_sympy():
             return _evaluate_with_sympy(expr)
