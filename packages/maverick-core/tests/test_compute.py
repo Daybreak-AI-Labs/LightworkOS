@@ -576,3 +576,14 @@ def test_a_sum_of_items_holding_calls_adds_them(monkeypatch, sympy_missing):
     assert float(run({"op": "evaluate", "expr": expr})) == 267580.32
     assert float(run({"op": "evaluate", "expr": "sum([round(1.005, 2), 2]) * 3"})) == 9.03
     assert float(run({"op": "evaluate", "expr": "sum((1, 2)) + sum([])"})) == 3
+
+
+@pytest.mark.parametrize("expr", ["100/0", "0/0", "log(0)", "100/(julianday('2026-01-01') - julianday('2026-01-01'))"])
+def test_a_division_by_zero_is_an_error_not_a_figure(expr):
+    # Review: with SymPy, a same-day per-diem (amount / days) came back "zoo"
+    # and 0/0 "nan", as if they were results.
+    if not _HAS_SYMPY:
+        pytest.skip("sympy not installed")
+    from maverick.tools.compute import compute
+    out = compute().fn({"op": "evaluate", "expr": expr})
+    assert out.startswith("ERROR") and "divides by zero" in out, out

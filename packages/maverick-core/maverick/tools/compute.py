@@ -84,11 +84,15 @@ def _have_sympy() -> bool:
 def _evaluate_with_sympy(expr: str) -> str:
     import sympy
     parsed = _safe_parse_expr(expr, evaluate=True, exact=True)
-    if isinstance(parsed, (tuple, sympy.Tuple)):
-        # "a, b, c" is several figures at once: an agent pricing eight reorders
-        # in one call got "'Tuple' object has no attribute 'evalf'".
-        return ", ".join(_figure(sympy.N(item, 30)) for item in parsed)
-    return _figure(sympy.N(parsed, 30))
+    items = list(parsed) if isinstance(parsed, (tuple, sympy.Tuple)) else [parsed]
+    values = [sympy.N(item, 30) for item in items]
+    # A division by zero came back "zoo" (and 0/0 "nan") as if it were the
+    # figure: a same-day per-diem, amount / days, read as an answer.
+    if any(value.has(sympy.zoo, sympy.nan, sympy.oo, -sympy.oo) for value in values):
+        raise ValueError("the expression divides by zero or has no finite value")
+    # "a, b, c" is several figures at once: an agent pricing eight reorders
+    # in one call got "'Tuple' object has no attribute 'evalf'".
+    return ", ".join(_figure(value) for value in values)
 
 
 def _figure(value) -> str:
