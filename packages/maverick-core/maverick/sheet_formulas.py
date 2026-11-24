@@ -223,6 +223,10 @@ class _Parser:
         raise _Uncomputable(f"{name} is not computed here")
 
 
+_ERROR_VALUES = frozenset({"#N/A", "#DIV/0!", "#VALUE!", "#REF!", "#NAME?", "#NUM!", "#NULL!", "#SPILL!",
+                           "#CALC!", "#GETTING_DATA"})
+
+
 def evaluate(formula: Any, get: Callable[[str], Any], memo: Memo | None = None) -> Decimal | None:
     """The value of ``formula`` ("=..."), reading other cells through
     ``get(ref)`` (a value or another formula), or None when it is not a
@@ -250,6 +254,11 @@ def evaluate(formula: Any, get: Callable[[str], Any], memo: Memo | None = None) 
             finally:
                 visiting.discard(key)
             return memo.values[key]
+        if isinstance(value, str) and value.strip().upper() in _ERROR_VALUES:
+            # An error cell makes every formula that reads it an error, in a
+            # range too: SUM over a #N/A came back 2030.75 where Excel shows
+            # #N/A, and the answer quoted the figure the file does not hold.
+            raise _Uncomputable(f"{key} holds the error {value.strip()}")
         if in_range and isinstance(value, str):
             # Excel leaves text in a range out of SUM, AVERAGE, MIN, MAX and
             # COUNT: "1200" typed as text added nothing to the file's total.

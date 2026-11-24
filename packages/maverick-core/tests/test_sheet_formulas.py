@@ -122,3 +122,16 @@ def test_a_range_leaves_out_text_as_excel_does():
     # A cell named on its own is still read as a number, as Excel does.
     assert evaluate("=B2*2", grid.get) == Decimal(2400)
     assert evaluate("=B3*2", grid.get) is None
+
+
+def test_an_error_cell_in_a_range_leaves_the_formula_uncomputed(tmp_path):
+    # Review: SUM over a #N/A skipped it as text and read back 2030.75 where
+    # Excel and LibreOffice show #N/A; op=read called the figure computed.
+    from maverick.tools import spreadsheet
+
+    rows = [["Customer", "Balance"], ["Acme", 1200.50], ["Beta", "#N/A"], ["Gamma", 830.25], ["Total", "=SUM(B2:B4)"]]
+    out = spreadsheet._run({"op": "write", "path": str(tmp_path / "aging.xlsx"), "rows": rows})
+    assert "Total,2030.75" not in out and "Total,=SUM(B2:B4)" in out, out
+    out = spreadsheet._run({"op": "write", "path": str(tmp_path / "m.xlsx"),
+                            "rows": [["Store", "Margin"], ["A", 0.21], ["B", "#DIV/0!"], ["Avg", "=AVERAGE(B2:B3)"]]})
+    assert "Avg,0.21" not in out, out
