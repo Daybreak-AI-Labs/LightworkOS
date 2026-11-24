@@ -52,11 +52,12 @@ def test_the_file_is_a_valid_pdf_with_a_correct_cross_reference_table():
 
 def test_text_layout_boxes_and_encoding():
     text = _streams(pdf_from_markdown(_CHECKLIST))
-    for word in ("(Wipe)", "(Descale)", "(Degrease)", "(Kitchen)", "(Page 1 of 1)"):
-        assert word in text, word
+    for words in ("(Wipe down counters", "Descale the espresso machine)", "(Degrease hood filters)", "(Kitchen)",
+                  "(Page 1 of 1)"):
+        assert words in text, words
     assert text.count(" re S") == 3  # three checklist boxes, one ticked
     assert "/F2" in text and "/F3" in text  # bold and code fonts are used
-    assert "(caf\\351)" in text and "(\\223quotes\\224)" in text  # Windows-1252, octal-escaped
+    assert "caf\\351 \\223quotes\\224" in text  # Windows-1252, octal-escaped
     assert "\\(about" in text  # parentheses are escaped in PDF strings
 
 
@@ -86,7 +87,7 @@ def test_poppler_reads_the_text_back(tmp_path):
 def test_a_column_sized_to_its_widest_word_keeps_that_word_whole():
     # Live: an invoice's "Hours" header broke into "Hour" and "s".
     text = _streams(pdf_from_markdown("| Description | Hours | Rate |\n|---|---|---|\n| Design work | 10 | $120 |\n"))
-    assert "(Hours)" in text and "(Hour)" not in text
+    assert "(Hours)" in text and "Hour)" not in text
 
 
 def test_a_short_column_beside_long_ones_keeps_its_words_whole():
@@ -99,7 +100,7 @@ def test_a_short_column_beside_long_ones_keeps_its_words_whole():
     text = _streams(pdf_from_markdown(table))
     for word in ("(System)", "(Square)", "(Clover)"):
         assert word in text, word
-    assert "(Sys)" not in text and "(Squ)" not in text
+    assert "Sys)" not in text and "Squ)" not in text
 
 
 def test_escaped_punctuation_is_written_without_its_backslash():
@@ -117,3 +118,24 @@ def test_a_page_break_line_starts_a_new_page(marker):
     pdf = pdf_from_markdown(f"Dear Rosa,\n\nPay soon.\n\n{marker}\n\nDear Ken,\n\nPay soon.\n")
     assert pdf.count(b"/Type /Page ") == 2
     assert "BREAK" not in _streams(pdf) and "newpage" not in _streams(pdf)
+
+
+def test_text_copies_out_with_its_spaces():
+    # Live: a bank statement PDF read back as "Cashdeposit" and
+    # "ACHcredit-Square": each word was placed on its own with no space
+    # character between, closer than text extractors take for a space, so
+    # copying text out of a Lightwork PDF lost its spaces too.
+    import io
+
+    import pypdf
+
+    pdf = pdf_from_markdown("Keep it **posted by the sink**. Costs are shared.\n\n"
+                            "| Date | Description | Deposits |\n|---|---|---:|\n| 10/05 | Cash deposit | 3,459.47 |\n")
+    text = pypdf.PdfReader(io.BytesIO(pdf)).pages[0].extract_text()
+    assert "Keep it posted by the sink. Costs are shared." in text, text
+    assert "Cash deposit" in text, text
+    pdfplumber = pytest.importorskip("pdfplumber")
+    with pdfplumber.open(io.BytesIO(pdf)) as document:
+        text = document.pages[0].extract_text()
+    assert "Keep it posted by the sink. Costs are shared." in text, text
+    assert "Cash deposit" in text, text

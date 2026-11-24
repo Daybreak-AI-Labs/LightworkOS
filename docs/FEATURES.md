@@ -12,7 +12,7 @@ catalogue of built features and tools.
 
 | Section | Entries |
 | --- | ---: |
-| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 226 |
+| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 227 |
 | [Tools](#tools) | 10 |
 | [Channels](#channels) | prose |
 | [Sandboxes](#sandboxes) | prose |
@@ -33,7 +33,7 @@ catalogue of built features and tools.
 | [Customer workflow completion and readiness](#customer-workflow-completion-and-readiness) | 22 in 24 subsections |
 | [In-house legal workspace](#in-house-legal-workspace) | prose |
 
-467 entries in 20 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
+468 entries in 20 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
 <!-- toc:end -->
 
 ## Agent kernel and orchestration
@@ -263,7 +263,9 @@ Settings and the installation wizard.
   printable US Letter PDF (headings, wrapped text, checklist boxes, tables,
   page numbers; standard fonts, Windows-1252 text) with no external program. A
   line `\newpage` starts a new page in Word and PDF, and an escaped character
-  such as `\$` is written without its backslash. Text into `.png`, `.jpg` and other
+  such as `\$` is written without its backslash. A PDF's words in one font
+  are written as one string with real spaces, so copied or extracted text
+  keeps them. Text into `.png`, `.jpg` and other
   binary images is refused with a pointer to SVG for charts. Decks are checked
   with python-pptx and LibreOffice, not Microsoft PowerPoint.
 - **Agents make their own choices outside the decision areas**
@@ -300,6 +302,12 @@ Settings and the installation wizard.
   exactly and reports it as `computed_value` with `value_status`
   "computed", apart from any stored cache; SQL over an Excel attachment sees
   the same values. Other formulas stay "uncalculated".
+- **PDF statements keep their columns** (`tools/pdf_reader.py`) — a page
+  where several lines hold two or more amounts (a bank statement, an
+  invoice) is read with pypdf's layout mode, so each figure stays under its
+  heading; plain extraction gave "10/03 Card-Costco 3,753.21 8,727.34" and
+  an agent could not tell withdrawals from deposits. Prose pages read as
+  before.
 - **SQL over CSV reads amounts and clock times** (`tools/csv_query.py`) —
   the `read_attachment` and `spreadsheet_read` queries load "4,850.00",
   "$1,089.99" and "($312.18)" as numbers (as text they summed as 4) and keep

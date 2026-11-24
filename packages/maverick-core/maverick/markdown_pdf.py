@@ -196,13 +196,23 @@ class _Pages:
                     ops.append(f"BT /F2 {size:.2f} Tf {mx + 1.2:.2f} {self.y:.2f} Td (x) Tj ET")
             else:
                 ops.append(f"BT /F1 {size:.2f} Tf {mx:.2f} {self.y:.2f} Td {_pdf_string(str(value))} Tj ET")
+        # Words in one font are written as one string with real spaces, so
+        # text copied or extracted from the PDF keeps them: placed one by
+        # one, "Cash deposit" in a table read back as "Cashdeposit".
+        runs: list[tuple[str, float, str]] = []
         for index, (word, bold) in enumerate(line):
-            if word.startswith(_GLUE):
+            glued = word.startswith(_GLUE)
+            if glued:
                 word = word[1:]
                 cursor -= space if index else 0  # written right after the previous word
             font = "F3" if mono else ("F2" if bold else "F1")
-            ops.append(f"BT /{font} {size:.2f} Tf {cursor:.2f} {self.y:.2f} Td {_pdf_string(word)} Tj ET")
+            if runs and runs[-1][0] == font:
+                runs[-1] = (font, runs[-1][1], runs[-1][2] + ("" if glued else " ") + word)
+            else:
+                runs.append((font, cursor, word))
             cursor += _width(word, size, bold, mono) + (space if index < len(line) - 1 else 0)
+        ops.extend(f"BT /{font} {size:.2f} Tf {x:.2f} {self.y:.2f} Td {_pdf_string(text)} Tj ET"
+                   for font, x, text in runs)
         self.pages[-1].extend(ops)
 
     def draw(self, op: str) -> None:
