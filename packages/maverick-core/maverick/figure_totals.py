@@ -184,7 +184,8 @@ def _markdown_tables(text: str):
 
 
 def answer_issues(text: str) -> list[str]:
-    """The totals in ``text``'s Markdown tables that do not add up."""
+    """The totals in ``text``'s Markdown tables, and under its lists, that do
+    not add up."""
     issues: list[str] = []
     for header, body, after in _markdown_tables(text or ""):
         issues += _table_issues(header, body)
@@ -193,7 +194,36 @@ def answer_issues(text: str) -> list[str]:
                 break
             if (issue := _line_issue(line, header, body)) is not None:
                 issues.append(issue)
-    return issues[:MAX_ISSUES]
+    return (issues + _list_issues(text or ""))[:MAX_ISSUES]
+
+
+_LIST_ITEM = re.compile(r"^\s*(?:[-*\u2022]|\d+[.)])\s+")
+_TOTAL_WORD = re.compile(r"\btotal\b", re.IGNORECASE)
+
+
+def _list_issues(text: str) -> list[str]:
+    """A "total" line right after a list of amounts that nearly, but not
+    exactly, equals their sum. Live: a lease answer listed each year's rent
+    times 12, $267,580.32 in all, under "Grand total: $267,580.44", and the
+    model judge accepted it. Each item's last amount is its figure; a total
+    far from the sum (twelve months of rent under the monthly rents) is a
+    figure of its own and left alone."""
+    issues = []
+    block: list[Decimal] = []
+    for line in text.splitlines():
+        amounts = _CENTS.findall(line)
+        if _TOTAL_WORD.search(line) and amounts:
+            stated = Decimal(amounts[-1].replace(",", ""))
+            added = sum(block, Decimal(0))
+            if len(block) >= 2 and added != stated and abs(added - stated) <= stated * Decimal("0.01"):
+                issues.append(f"The total {_money(stated, 2)} does not equal the amounts listed above it, "
+                              f"which add up to {_money(added, 2)}.")
+            block = []
+        elif _LIST_ITEM.match(line) and amounts:
+            block.append(Decimal(amounts[-1].replace(",", "")))
+        elif line.strip():
+            block = []
+    return issues
 
 
 def rows_issues(rows: list[list[Any]]) -> list[str]:

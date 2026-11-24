@@ -412,3 +412,21 @@ def test_figures_the_person_gave_are_theirs_to_quote():
     march = "<tool_output tool='recall_past_goals' id=2>\nTotal deposits: $100,079.96\n</tool_output 2>"
     assert recalled_issues("April deposits: $100,079.96.", march, "45638.36",
                            "Do the same deposit total for the April statement") != []
+
+
+def test_a_total_under_a_list_that_does_not_add_up_is_named():
+    # Live: a lease answer listed each year's rent times 12 ($267,580.32 in
+    # all) under "Grand total: $267,580.44", and the model judge accepted it.
+    lease = ("- **Monthly base rent by lease year:**\n  1. **Lease Year 1:** **$4,200.00**\n"
+             "  2. **Lease Year 2:** **$4,326.00**\n\n"
+             "- **Total base rent over the full 60-month term:** **$267,580.44**\n\nQuick check of the total:\n"
+             "- Year 1: $4,200.00 × 12 = $50,400.00\n- Year 2: $4,326.00 × 12 = $51,912.00\n"
+             "- Year 3: $4,455.78 × 12 = $53,469.36\n- Year 4: $4,589.45 × 12 = $55,073.40\n"
+             "- Year 5: $4,727.13 × 12 = $56,725.56\n\n**Grand total: $267,580.44**")
+    assert answer_issues(lease) == [
+        "The total 267,580.44 does not equal the amounts listed above it, which add up to 267,580.32."]
+    # A total that adds up, or one that is a figure of its own (a term's rent
+    # under monthly rents), stands.
+    assert answer_issues(lease.replace("Grand total: $267,580.44", "Grand total: $267,580.32")) == []
+    monthly = "- Year 1: $4,200.00\n- Year 2: $4,326.00\n- Total over the term: $102,312.00"
+    assert answer_issues(monthly) == []
