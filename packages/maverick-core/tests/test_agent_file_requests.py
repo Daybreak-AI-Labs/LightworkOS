@@ -469,3 +469,75 @@ def test_a_workbook_is_asked_for_only_when_the_spreadsheet_tool_is_granted(make_
     assert agent._request_workbook(_state(agent)) is False
     agent.capability = None
     assert agent._request_workbook(_state(agent)) is True
+
+
+# ---- Review round 2: giving verbs open a clause, negations govern a verb --
+
+@pytest.mark.parametrize(("request_text", "wanted"), [
+    # A giving verb inside a clause describes the file to work on.
+    ("List all invoices we sent to Acme in March as a CSV", ["a CSV file"]),
+    ("Convert the PDF I sent into a Word document", ["a Word document"]),
+    ("Turn the notes I uploaded into a PDF", ["a PDF"]),
+    ("Convert the invoice that is attached into a PDF", ["a PDF"]),
+    ("Summarize the emails I sent this week as a PDF", ["a PDF"]),
+    # "please find" is "search for" unless a file is attached.
+    ("Please find all overdue invoices and list them as a CSV", ["a CSV file"]),
+    ("Please find duplicate rows in the customer list and return them as a CSV", ["a CSV file"]),
+    ("Please find attached the ledger as a CSV. What is the closing balance?", []),
+    # A negation on the asking verb refuses the file.
+    ("Don't send it as a PDF, just paste the table", []),
+    ("Do not save it as a PDF. Paste the table.", []),
+    ("I don't need it as a PDF, just the total", []),
+    ("No need to save it as a PDF, just give me the total", []),
+    ("Please don't export it as a CSV; tell me the top 3", []),
+    ("Give me a no-frills PDF summary", ["a PDF"]),
+    # A choice asks for its first file (either one meets it) unless the
+    # clause weighs which is better.
+    ("I'd like the report as a PDF or Word document", ["a PDF"]),
+    ("Could I get the totals as a CSV or Excel file?", ["a CSV file"]),
+    ("The summary as a PDF or Word document, please", ["a PDF"]),
+    ("Convert the PDF or Word file into a CSV", ["a CSV file"]),
+    ("Should I export my bank statements as CSV or PDF?", []),
+    # A deck, slide or presentation that describes the next word is no file.
+    ("Give me the presentation schedule for next week", []),
+    ("Give me the presentation order for the conference", []),
+    ("Give me the slide numbers that mention revenue", []),
+    ("Give me the deck dimensions for a 12x16 build", []),
+    ("How do I make a deck railing?", []),
+    ("What stain should I use to make the deck last longer?", []),
+    ("Create a deck plan for my backyard", []),
+    # Real slide requests still count.
+    ("Build a deck for the investor meeting", ["slides"]),
+    ("I need a deck for Monday's board meeting", ["slides"]),
+    ("Send me a deck summarizing Q3", ["slides"]),
+    ("Make a short investor deck", ["slides"]),
+    ("Prepare a quarterly board deck on Q3 results", ["slides"]),
+    ("Turn this into a presentation", ["slides"]),
+    ("Turn these notes into a deck", ["slides"]),
+    ("Help me prepare for the presentation tomorrow.", []),
+])
+def test_review_round_two_requests(request_text, wanted):
+    assert sorted(_asked_for(request_text)) == sorted(wanted)
+
+
+@pytest.mark.parametrize(("request_text", "wanted"), [
+    ("Give me the quotes we sent last month as a spreadsheet", True),
+    ("Combine the timesheets I uploaded into one spreadsheet", True),
+    ("Pull the invoices we sent in Q3 into a spreadsheet", True),
+    ("Take the invoices I forwarded and put them into a spreadsheet", True),
+    ("Please find the top 10 customers by revenue as a spreadsheet", True),
+    ("Turn the attached PDF or Word document into a spreadsheet", True),
+    ("I've attached the budget as a spreadsheet. What is the total?", False),
+])
+def test_review_round_two_workbook_requests(request_text, wanted):
+    assert _asked_for_workbook(request_text) is wanted
+
+
+@pytest.mark.asyncio
+async def test_a_send_back_on_a_misread_request_lets_the_answer_stand(tmp_path, fake_llm, make_llm_response):
+    # A check that misreads a request must not push a file nobody wanted:
+    # the message says to give the answer again unchanged.
+    await _run(tmp_path, fake_llm, make_llm_response, "Build a deck for the investor meeting",
+               answer="Slide 1: Q3 revenue up 12%.")
+    sent = _sent_back(fake_llm)
+    assert "asked to receive slides" in sent and "give your final answer again unchanged" in sent

@@ -133,23 +133,34 @@ _RECALLED = re.compile(r"<tool_output tool='recall_past_goals' id=([0-9a-f]+)>.*
 
 
 #: The file types a person can ask to receive, as the request checks name them.
-#: Slides are slides, a slide or pitch deck, PowerPoint or "a (board)
-#: presentation": "build a 12x16 deck", "prepare for the presentation
-#: tomorrow" and "the numbers on slide 3" asked for no .pptx.
+#: Slides are slides, a slide or pitch deck, PowerPoint or a .pptx; a bare
+#: deck, slide or presentation is read by _is_asked: "prepare for the
+#: presentation tomorrow" and "the numbers on slide 3" asked for no .pptx.
 _FILE_TYPES = {
     "csv": r"csv",
     "word": r"word\s+(?:document|doc|file)|docx",
     "pdf": r"pdf",
-    "slides": r"slides|slide\s+deck|pitch\s+deck|powerpoint|pptx|an?\s+(?:[\w-]+\s+){0,2}?presentation",
+    "slides": r"slides|slide\s+deck|pitch\s+deck|powerpoint|pptx",
     "workbook": r"spreadsheets?|excel|workbooks?|xlsx",
 }
-# A bare deck, slide or presentation (group ``loose``) is slides only right
-# after a making word and "a", "one" or "the" (with at most one word
-# between): "Make a deck for the board", "Make one slide", "Prepare the Q3
-# presentation". Dropping them left those real requests unchecked.
+# A bare deck, slide or presentation (group ``loose``) is slides after an
+# asking verb and "a", "one" or "the", with at most two words describing it:
+# "Build a deck for the investor meeting", "Make a short investor deck",
+# "Prepare a quarterly board deck on Q3 results". Not when it describes the
+# word after it: "make a deck railing", "the presentation schedule", "the
+# slide numbers that mention revenue".
 _BARE_SLIDES = r"(?P<loose>deck|slide|presentation)"
-_MAKING = re.compile(r"make|create|prepare|produce|give\s+me", re.IGNORECASE)
-_ONE_MADE = re.compile(r"\W+(?:(?:me|us)\W+)?(?:an?|one|the)\W+(?:[\w-]+\W+)?", re.IGNORECASE)
+_MAKING = re.compile(r"make|create|build|prepare|produce|give\s+me|send|need|want|into|as", re.IGNORECASE)
+_ONE_MADE = re.compile(r"\W+(?:(?:me|us)\W+)?(?:an?|one|the)\W+(?:[\w'-]+\W+){0,2}", re.IGNORECASE)
+_DESCRIBES_NEXT = re.compile(
+    r"[ \t]+(?!(?:for|on|about|of|with|that|which|to|from|in|by|and|or|so|summarizing|covering|showing"
+    r"|explaining|outlining|i|we|you|please|today|tomorrow|tonight|now|asap)\b)[A-Za-z0-9]", re.IGNORECASE)
+# A bare deck is also a wooden one ("build a 12x16 deck", "a deck in my
+# backyard"): it is slides only beside words about a talk or its figures.
+_SLIDE_CONTEXT = re.compile(
+    r"\b(?:investors?|board|pitch|sales|meeting|quarter(?:ly)?|q[1-4]|results|update|strategy|review|clients?"
+    r"|customers?|marketing|kickoff|launch|summar\w*|revenue|leadership|conference|webinar|training|onboarding"
+    r"|all-hands|notes|outline|report|findings|kpis?|slides?)\b", re.IGNORECASE)
 #: The suffixes of the files on the task's page that hold each type.
 _TYPE_SUFFIXES = {"csv": (".csv",), "word": (".docx",), "pdf": (".pdf",), "slides": (".pptx",),
                   "workbook": (".xlsx", ".xlsm")}
@@ -182,37 +193,41 @@ _CLAUSE_END = re.compile(
     rf"(?:,\s+[\w-]+)?\s+(?:{'|'.join(_FILE_TYPES.values())})\b)", re.IGNORECASE)
 # A giving verb: the person says they are sending a file. "The invoice is
 # attached as a PDF. What is the total due?" names the PDF they gave, and its
-# correct answer was sent back to make a PDF nobody asked for. Only the verb
-# counts (opening the clause, after "I" or "we", "is attached", "here's"):
-# "Convert the attached notes into a PDF" and "Format the figures sent by
-# finance as a spreadsheet" ask for the file.
+# correct answer was sent back to make a PDF nobody asked for. It counts
+# opening a clause ("Here's", "I've attached", "Please find attached") or as
+# "is attached as": anywhere else it describes a file to work on, as in
+# "List all invoices we sent to Acme as a CSV", "Turn the notes I uploaded
+# into a PDF" or "Convert the invoice that is attached into a PDF".
 _GIVEN = re.compile(
-    r"^\W*(?:attached|enclosed|attaching|enclosing|uploading|sharing|sending|forwarding|this\s+is|these\s+are)\b"
-    r"|\b(?:here(?:'s|\u2019s|\s+is|\s+are)|please\s+find|below\s+is)\b"
-    r"|\b(?:i|we)(?:'ve|\u2019ve|'m|\u2019m|'re|\u2019re|\s+have|\s+am|\s+are)?(?:\s+just)?\s+(?:attached"
+    r"^\W*(?:(?:hi|hello|hey|thanks)\W+)?(?:attached|enclosed|attaching|enclosing|uploading|sharing|sending"
+    r"|forwarding|this\s+is|these\s+are|here(?:'s|\u2019s|\s+is|\s+are)|below\s+is"
+    r"|please\s+find\s+(?:attached|enclosed|below)"
+    r"|(?:i|we)(?:'ve|\u2019ve|'m|\u2019m|'re|\u2019re|\s+have|\s+am|\s+are)?(?:\s+just)?\s+(?:attached"
     r"|attaching|enclosed|enclosing|uploaded|uploading|included|including|sent|sending|shared|sharing"
-    r"|forwarded|forwarding)\b"
-    r"|\b(?:is|are)\s+(?:attached|enclosed|uploaded|below)\b", re.IGNORECASE)
+    r"|forwarded|forwarding))\b"
+    r"|\b(?:is|are)\s+(?:attached|enclosed|uploaded|included|below)\s+(?=as\b)", re.IGNORECASE)
 # An asking word after a giving verb asks again: "Use the numbers I shared
 # earlier and give me the totals as a CSV".
 _ASKED_AGAIN = re.compile(rf"\b(?:and|then|please)\W+(?:(?:also|then|just)\W+)?(?:{_ASKING_VERBS})\b",
                           re.IGNORECASE)
-# "No need for a PDF", "Don't send me a PDF", "as xlsx not csv": a file
-# refused. Only a negation inside the request or just before its asking word
-# refuses it: "customers who have not paid as a PDF" and "I don't have Excel
-# so give me a CSV" still ask for one.
-_REFUSED = re.compile(r"\b(?:no|not|never|without|don(?:'|\u2019)?t|instead\s+of)\b", re.IGNORECASE)
-_REFUSED_BEFORE = re.compile(r"\b(?:no|not|never|don(?:'|\u2019)?t|instead\s+of)(?:\W+(?:need|want|have))?"
-                             r"(?:\W+to)?\W+\Z", re.IGNORECASE)
+# "No need for a PDF", "Don't send it as a PDF", "as xlsx not csv": a file
+# refused. A negation refuses it inside the request, or just before its
+# asking word, or on an asking verb a few words before it ("Do not save it
+# as a PDF", "I don't need it as a PDF"): "customers who have not paid as a
+# PDF", "I don't have Excel so give me a CSV" and "a no-frills PDF" still ask.
+_REFUSED = re.compile(r"\b(?:no(?!-)|not|never|without|don(?:'|\u2019)?t|instead\s+of)\b", re.IGNORECASE)
+_REFUSED_BEFORE = re.compile(
+    rf"\b(?:no|not|never|don(?:'|\u2019)?t|instead\s+of)(?:\W+(?:need|want|have))?(?:\W+to)?"
+    rf"(?:\W+(?:{_ASKING_VERBS})(?:\W+\w+){{0,2}}?)?\W+\Z", re.IGNORECASE)
 _ANY_FILE_TYPE = re.compile("|".join(rf"\b(?P<{name}>{target})\b" for name, target in _FILE_TYPES.items()),
                             re.IGNORECASE)
 # Between two file types of a choice: "as CSV or PDF", "a PDF or as a Word document".
 _OR_BETWEEN = re.compile(r"\W+(?:\w+\W+){0,2}?or\W+(?:\w+\W+){0,2}?", re.IGNORECASE)
-# A clause that opens with an asking verb wants one of the files it offers
-# ("Send it as a PDF or Word document"); any other weighs them against each
-# other ("Should I export my bank statements as CSV or PDF?").
-_ASKS_FOR_ONE = re.compile(
-    rf"\W*(?:(?:please|just|(?:can|could|would|will)\s+you|i|we)\W+)*(?:{_ASKING_VERBS})\b", re.IGNORECASE)
+# A clause that offers two files wants one of them ("Send it as a PDF or
+# Word document", "I'd like the report as a PDF or Word document"), unless
+# it asks which is better ("Should I export my bank statements as CSV or PDF?").
+_WEIGHS = re.compile(r"\W*(?:should|shall|which|whether|is\s+it\s+better|would\s+it\s+be\s+better"
+                     r"|what(?:'s|\u2019s|\s+is)\s+(?:better|best)|do\s+you\s+recommend)\b", re.IGNORECASE)
 # What follows the file a conversion starts from: "Save the PDF [file] as a
 # Word document", "Export the spreadsheet to PDF". Only the file after
 # "as", "into" or "to" is one the person wants back.
@@ -228,12 +243,14 @@ def _is_asked(found: re.Match, clause: str, given: bool) -> bool:
     if given and trigger.lower() in ("as", "into"):
         return False
     if found.groupdict().get("loose") and not (
-            _MAKING.fullmatch(trigger) and _ONE_MADE.fullmatch(clause, found.end("trigger"), found.start("type"))):
+            _MAKING.fullmatch(trigger) and _ONE_MADE.fullmatch(clause, found.end("trigger"), found.start("type"))
+            and not _DESCRIBES_NEXT.match(clause, found.end())
+            and (found.group("loose").lower() != "deck" or _SLIDE_CONTEXT.search(clause))):
         return False
     # The negation is looked for only in and just before the match, so a
     # long clause is read once: rescanning it for every match took seconds.
     return not (_REFUSED.search(clause, start, found.start("type"))
-                or _REFUSED_BEFORE.search(clause, max(0, start - 24), start)
+                or _REFUSED_BEFORE.search(clause, max(0, start - 60), start)
                 or _CONVERTED_TO.match(clause, found.end()))
 
 
@@ -241,7 +258,7 @@ def _clause_asks(pattern: re.Pattern, clause: str, have: frozenset[str] | set[st
     """Whether ``clause`` asks to receive what ``pattern`` names (see _asks_to_receive)."""
     choices = [(first, second) for first, second in itertools.pairwise(_ANY_FILE_TYPE.finditer(clause))
                if first.lastgroup != second.lastgroup and _OR_BETWEEN.fullmatch(clause, first.end(), second.start())]
-    if choices and not _ASKS_FOR_ONE.match(clause):
+    if choices and _WEIGHS.match(clause):
         return False
     alternatives = {second.start() for _first, second in choices}
     either = {first.start(): set(_TYPE_SUFFIXES[str(second.lastgroup)]) for first, second in choices}
@@ -6104,7 +6121,8 @@ class Agent:
             "The person asked for a spreadsheet, and the task's page holds only a CSV, a plain-text "
             "table. Write the same rows as an Excel workbook with the `spreadsheet` tool (op write, a "
             "path ending in .xlsx), hand it over with deliver_file, then give your final answer again "
-            "naming the .xlsx file.")})
+            "naming the .xlsx file. If the person did not ask to receive a spreadsheet file, give your "
+            "final answer again unchanged.")})
         return True
 
     def _request_file_types(self, st: _RunState) -> bool:
@@ -6133,8 +6151,8 @@ class Agent:
         st.messages.append({"role": "user", "content": (
             f"The person asked to receive {labels}, and the task's page holds none: contents pasted into "
             f"the answer are not a file they can download. Save it ({how}), hand it over with "
-            "deliver_file, then give your final answer again naming the file. If the request did not "
-            "ask for that file, say so instead.")})
+            "deliver_file, then give your final answer again naming the file. If the person did not ask "
+            "to receive that file, give your final answer again unchanged.")})
         return True
 
     def _begin_final(self) -> None:
