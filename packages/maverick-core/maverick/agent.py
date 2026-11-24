@@ -1857,6 +1857,14 @@ def _accepts_keyword(fn: Any, name: str) -> bool:
     )
 
 
+def _ask_user_queued(output) -> bool:
+    """Whether an ``ask_user`` result filed a question (a question with the
+    agent's own answer is not sent and does not pause the run)."""
+    from .tools.ask_user import QUEUED
+
+    return not _tool_call_failed(output) and QUEUED in str(output)
+
+
 def _strip_final_marker(text: str) -> str:
     """The answer after the last ``FINAL:`` marker, or the whole text before
     one has arrived."""
@@ -6605,7 +6613,7 @@ class Agent:
                     return stopped, blocked
                 blocked = blocked or waiting
             if (tc.name == "ask_user" and not isinstance(output, _NotExecutedToolResult)
-                    and not _tool_call_failed(output)):  # only a filed question pauses the run
+                    and _ask_user_queued(output)):  # only a filed question pauses the run
                 from .autonomy import assume_when_headless
                 if assume_when_headless():
                     # No human is available (headless / autonomous run, off by
