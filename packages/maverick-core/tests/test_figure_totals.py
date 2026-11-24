@@ -204,6 +204,21 @@ def test_a_figure_taken_from_a_past_tasks_result_is_named():
     assert recalled_issues("Largest withdrawal: $4,284.61", recalled + " $4,284.61", query) == []
     # Live: the query gave 44976.1; the answer's $44,976.10 is the same figure.
     assert recalled_issues("Withdrawals: $44,976.10", recalled + " $44,976.10", query) == []
+    # Live: compute printed a lease's second-year rent as 4326, and the
+    # answer's correct $4,326.00 went back as copied from a past task's
+    # result, which named the same rent.
+    lease = "4326, 4455.78, 4589.45, 4727.13"
+    assert recalled_issues("Year 2: $4,326.00; Year 3: $4,455.78", recalled + " $4,326.00", lease) == []
+
+
+def test_a_whole_amount_a_tool_returned_is_not_a_garbled_figure():
+    from maverick.figure_totals import drift_issues
+
+    # compute prints $4,326.00 as 4326; beside 4326.5 elsewhere, the answer's
+    # $4,326.00 is the tool's own figure, not 4,326.50 garbled.
+    assert drift_issues("Year 2 rent: $4,326.00", "4326\nDeposit: 4326.50") == []
+    assert drift_issues("Year 2 rent: $4,326.10", "4326\nDeposit: 4326.50") == [
+        "The answer gives 4,326.10, but the tools returned 4,326.50."]
 
 
 @pytest.mark.asyncio

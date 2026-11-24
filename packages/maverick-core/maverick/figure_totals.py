@@ -217,6 +217,11 @@ def _returned_figures(text: str) -> set[Decimal]:
             for whole, decimals in _NUMBER_TOKEN.findall(text or "") if decimals}
 
 
+def _whole_figures(text: str) -> set[Decimal]:
+    """Every whole number a tool returned: compute prints $4,326.00 as 4326."""
+    return {Decimal(whole.replace(",", "")) for whole, decimals in _NUMBER_TOKEN.findall(text or "") if not decimals}
+
+
 def _cents_figures(text: str) -> set[Decimal]:
     """Two-decimal figures of ten or more: what typed money looks like."""
     found = set()
@@ -237,13 +242,14 @@ def drift_issues(answer: str, evidence: str) -> list[str]:
     found = _cents_figures(evidence) | _returned_figures(evidence)
     if not found:
         return []
+    whole = _whole_figures(evidence)
     by_whole: dict[int, set[Decimal]] = {}
     for value in found:
         by_whole.setdefault(int(value), set()).add(value)
     issues = []
     for value in sorted(_cents_figures(answer)):
         near = by_whole.get(int(value), set()) - {value}
-        if value not in found and near:
+        if value not in found and value not in whole and near:
             tool = min(near, key=lambda other: abs(other - value))
             issues.append(f"The answer gives {_money(value, 2)}, but the tools returned {_money(tool, 2)}.")
     return issues[:MAX_ISSUES]
@@ -256,7 +262,9 @@ def recalled_issues(answer: str, recalled: str, evidence: str) -> list[str]:
     A statement's compute calls returned 45,638.36 and 44,976.10, but the
     answer copied 100,079.96 and 99,417.70 from an earlier task on a
     different file, which recall_past_goals had shown as done."""
-    past = _cents_figures(recalled) - _returned_figures(evidence)
+    # A whole amount counts too: compute returned 4326 for a lease's second
+    # year, and the answer's $4,326.00 went back as copied from a past task.
+    past = _cents_figures(recalled) - _returned_figures(evidence) - _whole_figures(evidence)
     issues = [f"The answer gives {_money(value, 2)}, which comes from a past task's result, not from "
               "this task's data." for value in sorted(_cents_figures(answer) & past)][:MAX_ISSUES]
     if issues:
