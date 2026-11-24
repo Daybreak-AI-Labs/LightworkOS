@@ -437,3 +437,28 @@ def test_dates_no_tool_returned_are_named():
     # A slashed date's order is a guess, and no tool use at all is left to the model judge.
     assert date_issues("Due 03/04/2031.", lease) == []
     assert date_issues(typed, "") == []
+
+
+def test_a_date_an_agent_typed_in_its_report_is_not_a_tools_result():
+    # Live: a researcher typed a lease's notice deadline as September 30, 2029
+    # in its report; the date check took the report as a tool's result,
+    # while its compute calls had returned only 2030-03-31.
+    from types import SimpleNamespace
+
+    from maverick.agent import _worked_out
+    from maverick.figure_totals import date_issues
+
+    evidence = ("<tool_output tool='read_attachment' id=aa>\nbegins on April 1, 2025\n</tool_output aa>\n"
+                "<tool_output tool='spawn_subagent' id=bb>\nExpires March 31, 2030; notice by September 30, "
+                "2029\n</tool_output bb>")
+    events = [SimpleNamespace(kind="observation", content="tool=compute -> <tool_output tool='compute' id=cc>"
+                                                          "\n2030-03-31\n</tool_output cc>"),
+              SimpleNamespace(kind="observation", content="tool=spawn_subagent -> <tool_output tool='spawn_subagent'"
+                                                          " id=dd>\nSeptember 30, 2029\n</tool_output dd>"),
+              SimpleNamespace(kind="plan", content="2029-09-30")]
+    facts = _worked_out(evidence, SimpleNamespace(goal_events=lambda goal_id: events), 7)
+    assert "September 30" not in facts and "2030-03-31" in facts and "April 1, 2025" in facts
+    issues = date_issues("Expires March 31, 2030. Notice by September 30, 2029.", facts)
+    assert len(issues) == 1 and issues[0].startswith("The answer gives September 30, 2029, which no tool"), issues
+    # Without a world, the run's own results still count.
+    assert "April 1, 2025" in _worked_out(evidence, None, None)

@@ -1684,6 +1684,7 @@ def _observation_post(output: str, limit: int = _OBSERVATION_POST_CHARS) -> str:
 
 
 _VERIFIER_EVIDENCE_CHARS = 12_000
+_ALL_EVIDENCE_CHARS = 4_000_000
 
 
 _REFUSALS = ("not approved", "is denied by the current tool acl")
@@ -1816,7 +1817,7 @@ _READBACK = re.compile(r"(<tool_output tool='spreadsheet' id=([0-9a-f]+)>\n(?:(?
                        r"(\nWhat the file now holds.*?)(\n</tool_output \2>)", re.DOTALL)
 
 
-def _figure_evidence(messages: list[dict]) -> str:
+def _figure_evidence(messages: list[dict], limit: int = _VERIFIER_EVIDENCE_CHARS) -> str:
     """The run's tool results for the figure checks, each spreadsheet write's
     read-back cut to the figures the file's formulas worked out, in cents. A
     read-back repeats what the agent typed into the file, so a typed figure
@@ -1855,7 +1856,30 @@ def _figure_evidence(messages: list[dict]) -> str:
         held = " ".join(filter(None, map(cents, figures)))
         return match.group(1) + (f"\nThe file's formulas worked out: {held}" if held else "") + match.group(4)
 
-    return _READBACK.sub(worked_out, _verifier_evidence(messages))
+    return _READBACK.sub(worked_out, _verifier_evidence(messages, limit))
+
+
+# Tools whose results are another agent's own report, typed, not worked out.
+_AGENT_REPORTS = ("spawn_subagent", "spawn_swarm", "spawn_specialist", "delegate_to_agent", "recv_from_agent")
+_REPORT_FRAME = re.compile(rf"<tool_output tool='(?:{'|'.join(_AGENT_REPORTS)})' id=([0-9a-f]+)>.*?</tool_output \1>",
+                           re.DOTALL)
+
+
+def _worked_out(evidence: str, world, goal_id) -> str:
+    """``evidence`` without the reports agents wrote to each other, plus the
+    tool results every agent of the goal posted (each cut to its first 500
+    characters). Live: a researcher typed a lease's notice deadline as
+    September 30, 2029 in its report, and the date check took the report as
+    a tool's result; its compute calls had returned only 2030-03-31."""
+    parts = [_REPORT_FRAME.sub("", evidence)]
+    if world is not None and goal_id is not None:
+        try:
+            parts += [event.content for event in world.goal_events(goal_id)
+                      if event.kind == "observation" and not event.content.startswith(
+                          tuple(f"tool={name} " for name in _AGENT_REPORTS))]
+        except Exception:  # noqa: BLE001 -- the date check never blocks an answer
+            pass
+    return "\n".join(parts)
 
 
 def _tool_result_limit(model: str | None = None) -> int:
@@ -6524,11 +6548,16 @@ class Agent:
         # dates no tool returned go back too: a lease's typed total was
         # $644.64 short, and its typed notice deadline two days early.
         evidence = _figure_evidence(st.messages)
+        # Figures and dates no tool returned are looked for in every result,
+        # not the newest 12,000 characters: an early compute call fell out of
+        # that window and its date went back as typed.
+        everything = _figure_evidence(st.messages, limit=_ALL_EVIDENCE_CHARS)
         recalled = "\n".join(match.group(0) for match in _RECALLED.finditer(evidence))
         if issues := (answer_issues(final) + drift_issues(final, evidence) + percent_issues(final)
                       + recalled_issues(final, recalled, _RECALLED.sub("", evidence))
-                      + unsupported_issues(final, evidence, self._skill_query())
-                      + date_issues(final, evidence, self._skill_query())):
+                      + unsupported_issues(final, everything, self._skill_query())
+                      + date_issues(final, _worked_out(everything, self.ctx.world, self.ctx.goal_id),
+                                    self._skill_query())):
             from .verifier import VerifierVerdict
             verification.attempted = True
             verification.verdict = VerifierVerdict(
