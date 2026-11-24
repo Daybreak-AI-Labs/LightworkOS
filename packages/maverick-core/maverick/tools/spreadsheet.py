@@ -753,7 +753,8 @@ def spreadsheet(sandbox=None, goal_id: str | int | None = "default") -> Tool:
         description=(
             "Read / write / edit CSV + XLSX spreadsheets. ops: info (sheets + "
             "dims), read (rows as JSON), write (rows -> file, or sheets -> one .xlsx "
-            "with several named sheets), set_cell (xlsx "
+            "with several named sheets; to change a workbook, read it, change the rows, "
+            "formulas included, and write them back), set_cell (xlsx "
             "A1-cell), recalculate (offline LibreOffice engine when enabled). "
             "Formula cells include formula, cached_value and value_status; a cache is "
             "not proof of fresh calculation, and value_status 'computed' means Lightwork worked "

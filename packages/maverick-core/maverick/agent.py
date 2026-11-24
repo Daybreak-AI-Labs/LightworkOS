@@ -6121,8 +6121,9 @@ class Agent:
         # grand total was a dollar off and the model judge let it through.
         # A figure typed with its cents garbled (the tools returned 1,647.38,
         # the answer said 1,647.56) goes back the same way.
-        from .figure_totals import answer_issues, drift_issues
-        if issues := answer_issues(final) + drift_issues(final, _verifier_evidence(st.messages)):
+        from .figure_totals import answer_issues, drift_issues, percent_issues
+        if issues := (answer_issues(final) + drift_issues(final, _verifier_evidence(st.messages))
+                      + percent_issues(final)):
             from .verifier import VerifierVerdict
             verification.attempted = True
             verification.verdict = VerifierVerdict(

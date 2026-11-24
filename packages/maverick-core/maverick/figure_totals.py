@@ -232,3 +232,41 @@ def drift_issues(answer: str, evidence: str) -> list[str]:
             tool = min(near, key=lambda other: abs(other - value))
             issues.append(f"The answer gives {_money(value, 2)}, but the tools returned {_money(tool, 2)}.")
     return issues[:MAX_ISSUES]
+
+
+_PERCENT = re.compile(r"(?<![\d.])(\d{1,2}(?:\.\d{1,4})?)\s?%")
+
+
+def percent_issues(answer: str) -> list[str]:
+    """A percentage worked out wrong: a line with one percentage whose amount
+    nearly equals a nearby base times it, but not quite.
+
+    A receipt check said "Expected tax at 8.25%: $24.00" under "Subtotal
+    shown: $291.14" and called the receipt's correct $24.02 wrong. A line is
+    left alone when any base within three lines gives its amount exactly, or
+    when none comes within 1% of it."""
+    from decimal import ROUND_HALF_UP
+
+    lines = (answer or "").splitlines()
+    issues = []
+    for index, line in enumerate(lines):
+        percents = _PERCENT.findall(line)
+        amounts = [Decimal(raw.replace(",", "")) for raw in _CENTS.findall(line)]
+        if len(percents) != 1 or not 1 <= len(amounts) <= 2 or line.lstrip().startswith("|"):
+            continue  # a table row's percentage is usually a ratio of its own, such as growth
+        last = list(_CENTS.finditer(line))[-1].start()
+        if _PERCENT.search(line).start() > last:
+            continue  # "X% of" puts the rate before the amount it gives
+        rate, shown = Decimal(percents[0]), amounts[-1]
+        nearby = amounts[:-1] + [Decimal(raw.replace(",", "")) for other in lines[max(0, index - 3):index + 4]
+                                 if other is not line for raw in _CENTS.findall(other)]
+        worked = {base: (base * rate / 100).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                  for base in nearby if base > shown}
+        if not worked or shown in worked.values():
+            continue
+        near = [(base, value) for base, value in worked.items()
+                if value != shown and abs(value - shown) <= max(value * Decimal("0.01"), Decimal("0.02"))]
+        if near:
+            base, value = min(near, key=lambda pair: abs(pair[1] - shown))
+            issues.append(f"{_money(base, 2)} × {percents[0]}% is {_money(value, 2)}, not {_money(shown, 2)}.")
+    return issues[:MAX_ISSUES]

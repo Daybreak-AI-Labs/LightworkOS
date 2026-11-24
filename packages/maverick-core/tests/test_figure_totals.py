@@ -145,3 +145,39 @@ async def test_a_final_figure_that_garbles_a_computed_one_is_revised(tmp_path, f
     assert "The answer gives 1,647.56, but the tools returned 1,647.38." in brief
     goal = world.get_goal(gid)
     assert goal.status == "done" and "$1,647.38" in goal.result and "1,647.56" not in goal.result
+
+
+def test_a_percentage_worked_out_wrong_is_named():
+    # Live: "Expected tax at 8.25%: $24.00" for a $291.14 subtotal, and the
+    # conclusion that the receipt's correct $24.02 was wrong.
+    from maverick.figure_totals import percent_issues
+
+    answer = ("Subtotal shown: $291.14\nExpected tax at 8.25%: $24.00\nTax shown on receipt: $24.02\n"
+              "Conclusion: the tax does not appear to be correct.")
+    assert percent_issues(answer) == ["291.14 × 8.25% is 24.02, not 24.00."]
+    right = "Subtotal: $1,200.00\nSales tax (8.25%): $99.00\nTotal: $1,299.00\nOverhead 15% on $2,000.00: $300.00"
+    assert percent_issues(right) == []
+    # A percentage with no base nearby, several amounts on a line, or an
+    # unrelated amount: nothing to compare.
+    assert percent_issues("Margins rose 4% to $12.40 a unit.") == []
+    # A growth table row is a ratio of its own (live: a month-over-month table).
+    assert percent_issues("| 2026-03 | 26,634.51 | 16,461.57 | 61.80% |") == []
+    assert percent_issues("March: 26,634.51 against 16,461.57, up 61.80%") == []
+    assert percent_issues("Fee: $24.00\n\n\n\n\nRate 8.25% applies to $291.14 and $50.00 items.") == []
+
+
+@pytest.mark.asyncio
+async def test_a_final_with_a_percentage_worked_out_wrong_is_revised(tmp_path, fake_llm, make_llm_response):
+    fake_llm.scripted = [make_llm_response(text=t) for t in (
+        "FINAL: Subtotal shown: $291.14\nExpected tax at 8.25%: $24.00\nThe receipt's $24.02 is wrong.",
+        "FINAL: Subtotal shown: $291.14\nExpected tax at 8.25%: $24.02\nThe receipt's tax is right.",
+        '{"confidence": 0.95, "accepts": true, "critique": "ok", "issues": []}',
+        "FINAL: (no skill)")]
+    world = WorldModel(path=tmp_path / "world.db")
+    gid = world.create_goal("check the receipt's tax", "", owner="alice")
+
+    await run_goal(llm=fake_llm, world=world, budget=Budget(max_dollars=1.0), goal_id=gid,
+                   sandbox=LocalBackend(workdir=tmp_path), max_depth=1)
+
+    assert "291.14 × 8.25% is 24.02, not 24.00." in str(fake_llm.calls[1].get("messages", ""))
+    assert "tax is right" in world.get_goal(gid).result
