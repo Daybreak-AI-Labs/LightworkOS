@@ -599,7 +599,7 @@ def deliver_file(sandbox, goal_id: int | None, world) -> Tool:
         if not target.is_file():
             return f"ERROR: {args['path']} is not a file in the workspace"
         from ..task_files import MAX_DOWNLOAD_BYTES, record
-        saved = record(world, goal_id, sandbox.workdir, target)
+        saved = record(world, goal_id, sandbox.workdir, target, delivered=True)
         if saved is None:
             return (f"ERROR: {args['path']} could not be offered (it must be a regular file "
                     f"inside the workspace, at most {MAX_DOWNLOAD_BYTES // (1024 * 1024)} MB)")
@@ -613,7 +613,8 @@ def deliver_file(sandbox, goal_id: int | None, world) -> Tool:
             "task's page. Files you save with write_file or str_replace_editor are "
             "offered automatically; use this for a file a command or script created "
             "(for example a chart, a spreadsheet or a zip). The page serves the file "
-            "exactly as it is now."
+            "exactly as it is now. A Markdown or text draft of a Word, PowerPoint or "
+            "PDF file you made under the same name is not offered unless you deliver it."
         ),
         input_schema={
             "type": "object",
