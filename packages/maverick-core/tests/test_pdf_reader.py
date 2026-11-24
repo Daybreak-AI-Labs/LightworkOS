@@ -64,3 +64,25 @@ def test_pdf_parse_pages_ranges():
     assert _parse_pages("5", 10) == [4]
     assert _parse_pages("1,3,5", 10) == [0, 2, 4]
     assert _parse_pages("8-", 10) == [7, 8, 9]
+
+
+def test_all_means_every_page():
+    # Live: read_attachment(pages="all") answered "PDF parse failed
+    # (ValueError); check the document", and the agent decided the receipt
+    # could not be read and tried OCR, images and a shell command.
+    for spec in ("all", "ALL", "*", "all pages"):
+        assert _parse_pages(spec, total=3) == [0, 1, 2]
+
+
+def test_a_page_selection_problem_is_said_plainly():
+    from maverick.markdown_pdf import pdf_from_markdown
+    from maverick.tools.pdf_reader import pdf_text
+
+    data = pdf_from_markdown("# Receipt\n\nTOTAL 315.16\n")
+    if pdf_text(data, max_chars=10_000).startswith("ERROR"):
+        pytest.skip("no PDF parser installed")
+    assert "TOTAL 315.16" in pdf_text(data, pages="all", max_chars=10_000)
+    out = pdf_text(data, pages="99", max_chars=10_000)
+    assert out.startswith("ERROR: this PDF has") and "leave pages out" in out
+    bad = pdf_text(data, pages="a-b", max_chars=10_000)
+    assert bad.startswith("ERROR: invalid PDF page selection")

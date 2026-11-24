@@ -50,10 +50,18 @@ _PDF_INPUT_SCHEMA: dict[str, Any] = {
 }
 
 
+class PageSelectionError(ValueError):
+    """A page selection that names no page this PDF has; said as it is."""
+
+
+_ALL_PAGES = frozenset({"all", "*", "all pages"})
+
+
 def _parse_pages(spec: str, total: int) -> list[int]:
-    """Parse '1-5', '3', '10-' into a list of 0-indexed page indices."""
+    """Parse '1-5', '3', '10-' into a list of 0-indexed page indices; empty,
+    "all" or "*" mean every page."""
     spec = (spec or "").strip()
-    if not spec:
+    if not spec or spec.casefold() in _ALL_PAGES:
         return list(range(total))
     out: set[int] = set()
     try:
@@ -75,8 +83,18 @@ def _parse_pages(spec: str, total: int) -> list[int]:
                     out.add(n - 1)
     except ValueError as exc:
         # Never silently expand an invalid selection to the whole document.
-        raise ValueError("invalid PDF page selection; use ranges such as 1-5,8,10-") from exc
+        raise PageSelectionError("invalid PDF page selection; use ranges such as 1-5,8,10-, "
+                                 "or leave pages out for all of them") from exc
     return sorted(out)
+
+
+def _pages_or_say(spec: str | None, total: int) -> list[int]:
+    """The selected pages, or a plain error when a selection names none."""
+    indices = _parse_pages(spec or "", total)
+    if not indices and (spec or "").strip():
+        raise PageSelectionError(f"this PDF has {total} page{'' if total == 1 else 's'}; choose pages from "
+                                 f"1 to {total}, or leave pages out for all of them")
+    return indices
 
 
 def _load_bytes(source: str, workdir: Path | None = None) -> bytes | None:
@@ -140,7 +158,7 @@ def _extract_with_pdfplumber(data: bytes, pages: str | None, include_tables: boo
     has_content = False
     with pdfplumber.open(io.BytesIO(data)) as pdf:
         total = len(pdf.pages)
-        page_indices = _parse_pages(pages or "", total)
+        page_indices = _pages_or_say(pages, total)
         for idx in page_indices:
             page = pdf.pages[idx]
             text = (page.extract_text() or "").strip()
@@ -170,7 +188,7 @@ def _extract_with_pypdf(data: bytes, pages: str | None) -> str | None:
             return None
     reader = pypdf.PdfReader(io.BytesIO(data))
     total = len(reader.pages)
-    page_indices = _parse_pages(pages or "", total)
+    page_indices = _pages_or_say(pages, total)
     out: list[str] = []
     has_content = False
     for idx in page_indices:
@@ -226,6 +244,10 @@ def _selected_text(data, pages, include_tables):
             return f"ERROR: isolated PDF parse failed: {exc}"
     try:
         return extract_text_from_bytes(data, pages=pages, include_tables=include_tables)
+    except PageSelectionError as exc:
+        # Live: pages="all" was reported as "PDF parse failed", and the agent
+        # gave up on a readable receipt.
+        return f"ERROR: {exc}"
     except Exception as exc:
         return f"ERROR: PDF parse failed ({type(exc).__name__}); check the document and page selection"
 
