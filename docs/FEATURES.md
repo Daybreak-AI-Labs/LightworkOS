@@ -334,12 +334,15 @@ Settings and the installation wizard.
   report's every balance had fallen into 90+); a column whose order the data
   does not show is kept and named when a date function runs, and a date
   function empty in every row says why. A percent column holding 15 for 15%
-  that a query uses in arithmetic without dividing by 100 gets a note, and
+  that a query uses in arithmetic without dividing by 100 gets a note, as
+  does a column of numbers with blanks used in arithmetic without COALESCE
+  (a blank is NULL, so amount - paid left every unpaid invoice out), and
   `round` rounds half away from zero on the figure as written (SQLite's gave
   41.17 for 41.175). `hours('7:00-15:30')` and 12-hour times work. In
   `read_attachment`'s `sql`, the task's other attached files are tables named
-  after the file (a workbook's sheets also `<name>_<sheet>`), so one query
-  joins sales to a cost workbook. A Word document's tables are queried with
+  after the file (a workbook's sheets also `<name>_<sheet>`), and the file
+  being read is `data` and its own name, so one query joins sales to a cost
+  workbook. A Word document's tables are queried with
   `sql` (`table` picks one), and its text companion keeps each table row on
   one line with blank cells in place (one cell per line had dropped them).
 - **Dates in `compute`** (`tools/compute.py`) — an expression that calls
@@ -350,15 +353,17 @@ Settings and the installation wizard.
   1850. A lease's renewal deadline had been counted by hand a day late.
 - **A written spreadsheet reports what it holds** (`tools/spreadsheet.py`,
   `verifier.py`) — a `spreadsheet` write ends with the file's rows (25 per
-  sheet, formulas worked out), so the agent and the verifier see the
-  delivered numbers; the verifier checks a delivered file's figures and that
-  its parts agree, and does not accept an impossible figure blamed on the
-  data. An aging summary and a depreciation schedule had been wrong while
-  the answer named only the file.
+  sheet, formulas worked out), so the agent sees the numbers it saved, and
+  the verifier reads every spreadsheet on the task's page, whichever agent
+  wrote it: it checks a delivered file's figures and that its parts agree,
+  and does not accept an impossible figure blamed on the data. An aging
+  summary and a depreciation schedule had been wrong while the answer named
+  only the file.
 - **A file type the person asks for is a file** (`agent.py`) — asked for a
   CSV, a Word document, a PDF or slides, an answer with no such file on the
   task's page goes back once to save and deliver it ("Give me the cleaned
-  CSV" had pasted it into the answer).
+  CSV" had pasted it into the answer). A sentence about what the person
+  sends ("Here's the timesheet as a Word file") does not count.
 - **Web search on by default** (`config.get_capabilities`,
   `[capabilities] web_search`, off on an enterprise install) — agents can
   search for current facts without setup. With no search key Lightwork uses
