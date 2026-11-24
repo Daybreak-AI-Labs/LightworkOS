@@ -44,9 +44,14 @@ def _parts(data: bytes, max_expanded: int) -> dict:
                 if "<!DOCTYPE" in text.upper() or "<!ENTITY" in text.upper() or "\x00" in text:
                     raise ValueError("Office XML entities/declarations are unsupported")
                 node = ET.fromstring(text)
+                # A hyperlink's address is only text the reader may click: any
+                # Word file with a link was refused. Every other outside
+                # target (a remote template, a linked image or object) is still
+                # refused, since opening the file would reach it.
                 if folded.endswith(".rels") and any(
-                    rel.get("TargetMode", "").lower() == "external"
-                    or re.match(r"(?:[A-Za-z][A-Za-z0-9+.-]*:|//|\\\\)", rel.get("Target", ""))
+                    (rel.get("TargetMode", "").lower() == "external"
+                     or re.match(r"(?:[A-Za-z][A-Za-z0-9+.-]*:|//|\\\\)", rel.get("Target", "")))
+                    and not rel.get("Type", "").endswith("/relationships/hyperlink")
                     for rel in node
                 ):
                     raise ValueError("Office external links require a reviewed text copy")
@@ -98,24 +103,41 @@ def _table_rows(table) -> list[list[str]]:
 
 def word_tables(data: bytes, max_expanded: int) -> list[list[list[str]]]:
     """Every top-level table in a Word document's body, as rows of cell text,
-    read through the same bounded package checks and refusals as extraction."""
-    body = _word_body(_parts(data, max_expanded))
+    read through the same bounded package checks as extraction. A table
+    holding a field, a pending change or embedded content is refused, as
+    extraction refuses it; one elsewhere in the document is not: a table of
+    contents or a printed date above a rent schedule cannot change its cells,
+    and refusing them left the schedule unreadable."""
+    body = _word_body(_parts(data, max_expanded), everywhere=False)
     return [_table_rows(node) for node in body if node.tag == W + "tbl"]
 
 
-def _word_body(parts):
-    """A Word document's body, refusing what a plain reading gets wrong. The
-    table reader once skipped this: a pending tracked change was summed as if
-    accepted, and a field's cached result was read as data."""
+# What a plain reading gets wrong: a pending tracked change (an insertion,
+# deletion or move, a cell revision) read as accepted, a field's cached
+# result read as data, and text boxes and embedded content read out of place.
+_REFUSED = frozenset(W + name for name in ("altChunk", "object", "instrText", "fldSimple", "ins", "del",
+                                           "moveFrom", "moveTo", "cellIns", "cellDel", "txbxContent"))
+# A simple field outside a table is a caption number or a page reference,
+# which a reading of the text can carry: pandoc and docx libraries write
+# "Table 1" captions this way.
+_REFUSED_IN_TABLES_ONLY = frozenset({W + "fldSimple"})
+
+
+def _word_body(parts, everywhere: bool = True):
+    """A Word document's body, refusing what a plain reading gets wrong:
+    anywhere in it for its text (``everywhere``), inside its tables for the
+    table reader. The table reader once skipped this: a pending tracked
+    change was summed as if accepted, and a field's cached result was read
+    as data."""
     root = parts.get("word/document.xml")
     if root is None or root.tag != W + "document":
         raise ValueError("Word document body is missing")
-    # Tracked moves, simple fields and cell revisions are the same pending
-    # changes and cached results: a tracked move of 40 to 45 read as 4045.
-    if any(node.tag in {W + name for name in ("altChunk", "object", "instrText", "fldSimple", "ins", "del",
-                                               "moveFrom", "moveTo", "cellIns", "cellDel", "txbxContent")}
-           for node in root.iter()):
-        raise ValueError("Word fields, embedded content and tracked changes need a reviewed text copy")
+    tables = [node for node in root.iter() if node.tag == W + "tbl"]
+    in_tables = {id(node) for table in tables for node in table.iter()}
+    for node in root.iter():
+        if node.tag in _REFUSED and (id(node) in in_tables
+                                     or (everywhere and node.tag not in _REFUSED_IN_TABLES_ONLY)):
+            raise ValueError("Word fields, embedded content and tracked changes need a reviewed text copy")
     body = root.find(W + "body")
     if body is None:
         raise ValueError("Word document body is missing")

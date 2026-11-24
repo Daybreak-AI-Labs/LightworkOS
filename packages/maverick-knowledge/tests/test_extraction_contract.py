@@ -245,3 +245,53 @@ def test_ingestion_retains_extraction_metadata_and_exact_reconstruction(tmp_path
             kb.ingest_text("sales", extraction.text, source=str(path), extra_meta={"extraction": {"schema": "changed"}})
     finally:
         kb.close()
+
+
+@pytest.mark.parametrize("tag", ["instrText", "fldSimple", "ins", "txbxContent"])
+def test_a_field_or_change_outside_every_table_leaves_the_tables_readable(tmp_path, tag):
+    # Review: a table of contents, a "Printed <date>" field or a caption
+    # number above a rent schedule refused the schedule's table too, so `sql`
+    # could not reach it at all.
+    docx = pytest.importorskip("docx")
+    from docx.oxml import OxmlElement
+    from maverick_knowledge.parse import word_document_tables
+
+    path = tmp_path / "lease.docx"
+    document = docx.Document()
+    document.add_paragraph("Rent schedule")._p.append(OxmlElement(f"w:{tag}"))
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 0).text, table.cell(0, 1).text = "Year", "Rent"
+    table.cell(1, 0).text, table.cell(1, 1).text = "1", "4200.00"
+    document.save(path)
+    assert word_document_tables(path.read_bytes()) == [[["Year", "Rent"], ["1", "4200.00"]]]
+    # Text extraction still refuses all but a simple field, which outside a
+    # table is a caption number or page reference.
+    assert extract_document(path).status == ("rejected" if tag != "fldSimple" else "complete")
+
+
+def test_a_hyperlink_is_read_and_other_outside_targets_are_refused(tmp_path):
+    # Review: any Word file with a link (a pandoc lease, an invoice with a
+    # mailto) was refused by text extraction and by `sql`. Opening a link is
+    # the reader's choice; a remote template is fetched when the file opens.
+    docx = pytest.importorskip("docx")
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+    from maverick_knowledge.parse import word_document_tables
+
+    path = tmp_path / "invoice.docx"
+    document = docx.Document()
+    document.add_paragraph("Pay at our site")
+    document.part.relate_to("https://pay.example.com/inv/42", RT.HYPERLINK, is_external=True)
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 0).text, table.cell(0, 1).text = "Item", "Amount"
+    table.cell(1, 0).text, table.cell(1, 1).text = "Rent", "4200.00"
+    document.save(path)
+    assert extract_document(path).status != "rejected"
+    assert word_document_tables(path.read_bytes()) == [[["Item", "Amount"], ["Rent", "4200.00"]]]
+
+    template = tmp_path / "template.docx"
+    document.part.relate_to("https://evil.example.com/t.dotm", "http://schemas.openxmlformats.org/officeDocument/"
+                            "2006/relationships/attachedTemplate", is_external=True)
+    document.save(template)
+    assert extract_document(template).status == "rejected"
+    with pytest.raises(ValueError, match="external links"):
+        word_document_tables(template.read_bytes())
