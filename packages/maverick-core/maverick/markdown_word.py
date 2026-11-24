@@ -23,6 +23,30 @@ class UnwritableText(ValueError):
 _W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _XML = "http://www.w3.org/XML/1998/namespace"
 _TYPES = "http://schemas.openxmlformats.org/package/2006/content-types"
+_R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+# Parts are written back with the prefixes office programs expect. With
+# ElementTree's default ns0 prefixes, LibreOffice refused every document
+# ("source file could not be loaded"), [Content_Types].xml first of all.
+ET.register_namespace("w", _W)
+ET.register_namespace("r", _R)
+
+
+def _xml(element) -> bytes:
+    return ET.tostring(element, encoding="utf-8", xml_declaration=True)
+
+
+def _content_types(types) -> bytes:
+    """[Content_Types].xml in its default namespace, the form package readers
+    such as LibreOffice accept: a flat list of Default and Override entries."""
+    from xml.sax.saxutils import quoteattr
+
+    entries = []
+    for node in types:
+        name = node.tag.rpartition("}")[2]
+        attributes = "".join(f" {key}={quoteattr(value)}" for key, value in node.attrib.items())
+        entries.append(f"<{name}{attributes}/>")
+    return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f'<Types xmlns="{_TYPES}">' + "".join(entries) + "</Types>").encode("utf-8")
 _BOLD = re.compile(r"\*\*([^*\n]+)\*\*")
 _HEADING = re.compile(r"^(#{1,6}) ([^#].*)$")
 _BULLET = re.compile(r"^[-+*] (\S.*)$")
@@ -191,7 +215,7 @@ def word_answer(text: str, title: str) -> bytes:
     for node in list(settings):
         if node.tag in {f"{{{_W}}}trackRevisions", f"{{{_W}}}trackChanges", f"{{{_W}}}documentProtection"}:
             settings.remove(node)
-    parts["word/settings.xml"] = ET.tostring(settings, encoding="utf-8", xml_declaration=True)
+    parts["word/settings.xml"] = _xml(settings)
     styles = ET.fromstring(parts["word/styles.xml"])
     for node in styles.iter(f"{{{_W}}}color"):
         node.set(f"{{{_W}}}val", "000000")
@@ -199,7 +223,7 @@ def word_answer(text: str, title: str) -> bytes:
         for node in list(paragraph):
             if node.tag == f"{{{_W}}}pBdr":
                 paragraph.remove(node)
-    parts["word/styles.xml"] = ET.tostring(styles, encoding="utf-8", xml_declaration=True)
+    parts["word/styles.xml"] = _xml(styles)
     document = ET.fromstring(parts["word/document.xml"])
     body = document.find(f"{{{_W}}}body")
     paragraphs = body.findall(f"{{{_W}}}p")
@@ -223,17 +247,17 @@ def word_answer(text: str, title: str) -> bytes:
     for node in list(section):
         if node.tag == f"{{{_W}}}headerReference":
             section.remove(node)
-    parts["word/document.xml"] = ET.tostring(document, encoding="utf-8", xml_declaration=True)
+    parts["word/document.xml"] = _xml(document)
     # Keep a neutral page footer; no report, legal-review or redline branding.
     footer = ET.fromstring(parts["word/footer1.xml"])
     first_text = footer.find(f".//{{{_W}}}t")
     if first_text is not None:
         first_text.text = ""
-    parts["word/footer1.xml"] = ET.tostring(footer, encoding="utf-8", xml_declaration=True)
+    parts["word/footer1.xml"] = _xml(footer)
     parts["lightwork/source.md"] = text.encode("utf-8")
     types = ET.fromstring(parts["[Content_Types].xml"])
     ET.SubElement(types, f"{{{_TYPES}}}Default", {"Extension": "md", "ContentType": "text/markdown"})
-    parts["[Content_Types].xml"] = ET.tostring(types, encoding="utf-8", xml_declaration=True)
+    parts["[Content_Types].xml"] = _content_types(types)
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
         for name, value in parts.items():
