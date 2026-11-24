@@ -226,7 +226,8 @@ def test_a_date_taken_from_a_past_tasks_result_is_named():
     answer = "Last day to give notice: October 2, 2028. The lease expires on March 31, 2029."
     assert recalled_issues(answer, recalled, tools) == [
         "The answer gives March 31, 2029, which comes from a past task's result, not from this task's files. "
-        "Work each date out with compute from the dates this task's files state."]
+        "Work each date out with compute from the dates this task's files state, and give the dates "
+        "that gives."]
     # A date this run's tools returned, in any form, stands: compute printed
     # 2028-10-02, and a file wrote 3/31/2029 or 31/03/2029.
     assert recalled_issues("Notice by Oct. 2, 2028.", recalled, tools) == []
@@ -234,7 +235,8 @@ def test_a_date_taken_from_a_past_tasks_result_is_named():
     assert recalled_issues(answer, recalled, tools + "\nExpires 31/03/2029") == []
     assert recalled_issues("It expires 2029-03-31.", recalled, tools) == [
         "The answer gives March 31, 2029, which comes from a past task's result, not from this task's files. "
-        "Work each date out with compute from the dates this task's files state."]
+        "Work each date out with compute from the dates this task's files state, and give the dates "
+        "that gives."]
     # Live: a correct answer named the past task's date only to rule it out.
     assert recalled_issues("Give notice by October 2, 2029, not October 3, 2029.",
                            "result: Last day: October 3, 2029", "2029-10-02") == []
@@ -251,7 +253,339 @@ def test_a_date_taken_from_a_past_tasks_result_is_named():
     assert both[1].startswith("The answer gives March 31, 2029, which comes from a past task's result")
     assert both[1].endswith("Take each figure from this task's own files, reading a file's text where a "
                             "query's table does not hold it. Work each date out with compute from the dates "
-                            "this task's files state.")
+                            "this task's files state, and give the dates that gives.")
+
+
+def test_a_past_date_is_read_without_raising_or_misreading():
+    # Review: under IGNORECASE alone a long s matched "sep" and raised.
+    import datetime
+
+    from maverick.figure_totals import _dates, recalled_issues
+
+    assert recalled_issues("ok", "", "", "meeting on \u017fep 5, 2029") == []
+    assert _dates("\u017fep 5, 2029 and Sept. 5, 2029") == {datetime.date(2029, 9, 5)}
+    # A slash date counts as a claim only when one reading is a date.
+    assert _dates("3/31/2029") == {datetime.date(2029, 3, 31)}
+    assert _dates("4/10/2029") == set()
+    assert _dates("31-Mar-2029 and 2029-03-31") == {datetime.date(2029, 3, 31)}
+
+
+@pytest.mark.parametrize("answer", [
+    "Give notice by **October 2, 2029**, not **October 3, 2029**.",
+    "Give notice by October 2, 2029, not the October 3, 2029 an earlier answer gave.",
+    "- Correct: October 2, 2029\n- Not: October 3, 2029",
+    "The earlier answer gave October 3, 2029, a day late; give notice by October 2, 2029.",
+    "Give notice by October 2, 2029 (previously reported as October 3, 2029).",
+    "I corrected the deadline from October 3, 2029 to October 2, 2029.",
+])
+def test_a_past_date_the_answer_rules_out_is_not_called_copied(answer):
+    # Review: a revision that says what it corrected names the past date; it
+    # must not go back again for the date it has just corrected.
+    from maverick.figure_totals import recalled_issues
+
+    assert recalled_issues(answer, "result: Last day: October 3, 2029", "2029-10-02") == []
+
+
+def test_a_copied_date_in_a_plain_sentence_is_still_named():
+    from maverick.figure_totals import recalled_issues
+
+    recalled = "result: The lease expires on March 31, 2029."
+    for answer in ("The lease expires on March 31, 2029.", "- **Expires:** **March 31, 2029**",
+                   "Here is the corrected lease summary:\n- The lease expires on March 31, 2029.",
+                   "It expires 3/31/2029."):
+        assert recalled_issues(answer, recalled, "2030-03-31")[0].startswith(
+            "The answer gives March 31, 2029, which comes from a past task's result"), answer
+
+
+@pytest.mark.parametrize("request_text", [
+    "Run the AR aging as of 10/31", "AR aging as of Oct 31", "AR aging as of the 31st of October",
+    "AR aging for October 2026", "AR aging for October", "The Q4 2026 aging, please", "Aging for 2026 Q4",
+])
+def test_a_date_the_request_names_by_period_is_not_called_copied(request_text):
+    # Review: rerunning October's aging "as of 10/31" went back for the
+    # October 31 a past run's result also gave.
+    import datetime
+
+    from maverick.figure_totals import recalled_issues
+
+    recalled = "result: AR aging as of October 31, 2026: total $47,949.07"
+    today = datetime.date(2026, 11, 24)
+    answer = "AR aging as of October 31, 2026."
+    assert recalled_issues(answer, recalled, "invoice,due\n1001,2026-08-15", request_text, today) == []
+    assert recalled_issues(answer, recalled, "invoice,due\n1001,2026-08-15", "Run the AR aging", today)
+
+
+@pytest.mark.parametrize(("request_text", "day"), [
+    ("Aging as of the end of last month", (2026, 10, 31)),
+    ("Spend for the previous quarter", (2026, 9, 30)),
+    ("Sales this month so far", (2026, 11, 3)),
+    ("Close out this quarter", (2026, 12, 31)),
+])
+def test_a_date_in_a_relative_period_the_request_names_is_not_called_copied(request_text, day):
+    import datetime
+
+    from maverick.figure_totals import _long_date, recalled_issues
+
+    named = _long_date(datetime.date(*day))
+    today = datetime.date(2026, 11, 24)
+    assert recalled_issues(f"As of {named}.", f"result: as of {named}", "", request_text, today) == []
+    assert recalled_issues(f"As of {named}.", f"result: as of {named}", "", "Run it", today)
+
+
+@pytest.mark.parametrize("tool_text", [
+    "commences on the 1st day of April, 2025 and ends on the 31st day of March, 2030",
+    "Start 01-Apr-2025  End 31-Mar-2030", "end_date: 2030/03/31", "end=20300331", "Ende: 31.03.2030",
+    "ends 3/31/30", "end 2030-3-31", "Ends March, 31 2030", "read lease-2030-03-31.txt",
+])
+def test_a_date_a_file_writes_in_another_form_is_not_called_copied(tool_text):
+    # Review: the lease's own wording ("the 31st day of March, 2030") did not
+    # clear the answer's March 31, 2030, which a past result also gave.
+    from maverick.figure_totals import recalled_issues
+
+    recalled = "result: The lease runs from April 1, 2025 to March 31, 2030."
+    assert recalled_issues("The lease ends March 31, 2030.", recalled, tool_text) == []
+
+
+@pytest.mark.parametrize("answer", [
+    "| Lease end | March 31, 2029 | March 31, 2030 |",
+    "Fixed: lease end March 31, 2029 -> March 31, 2030.",
+    "The lease ends March 31, 2030 (the summary had March 31, 2029).",
+    "The summary said March 31, 2029. The lease actually ends March 31, 2030.",
+    "The lease ends March 31, 2030, one year later than the March 31, 2029 in the summary.",
+    "The lease ends March 31, 2030 (the earlier summary listed March 31, 2029).",
+    "The lease ends March 31, 2030. Note: a past summary gave March 31, 2029, but the 60-month term ends in 2030.",
+])
+def test_a_past_date_corrected_on_its_own_line_is_not_called_copied(answer):
+    # Review: a correct answer that set the summary's date beside the right
+    # one went back for the date it was correcting.
+    from maverick.figure_totals import recalled_issues
+
+    assert recalled_issues(answer, "result: Lease ends March 31, 2029", "2030-03-31",
+                           "Double-check the lease end date from the summary") == []
+
+
+@pytest.mark.parametrize(("tool_text", "answer"), [
+    ("commence on April 1, 2025 and end on March 31, 2030.",
+     "The lease runs April 1, 2025 to March 31, 2030."),
+    ("Ends 03-31-2030", "The lease ends March 31, 2030."),
+    ("Ends 31-03-2030", "The lease ends March 31, 2030."),
+    ("ends March 31,2030", "The lease ends March 31, 2030."),
+    ("Statement period Oct 1-31, 2026", "Statement for October 1, 2026 to October 31, 2026."),
+    ("Statement period March 1 – 31, 2030", "Statement through March 31, 2030."),
+    ("Period: April 1 - June 30, 2026", "Quarter from April 1, 2026 to June 30, 2026."),
+    ("Profit and Loss - October 2026", "For the month ended October 31, 2026."),
+    ("Date,Amount\n31-Oct,500.00", "Deposit in transit recorded October 31, 2026."),
+    ("Date,Amount\nOct-31,500.00", "Deposit in transit recorded October 31, 2026."),
+    ("Due 10-31", "Deposit in transit recorded October 31, 2026."),
+])
+def test_more_forms_a_file_writes_clear_a_date(tool_text, answer):
+    # Review: a Word file's no-break spaces, a bank export's 03-31-2030, PDF
+    # text's "March 31,2030" and a statement's period did not clear the date.
+    from maverick.figure_totals import recalled_issues
+
+    recalled = ("result: April 1, 2025 to March 31, 2030; October 1, 2026 to October 31, 2026; "
+                "April 1, 2026 to June 30, 2026")
+    assert recalled_issues(answer, recalled, tool_text) == []
+
+
+@pytest.mark.parametrize("request_text", [
+    "Run the AR aging and compare it with the last one", "AR aging vs last month",
+    "What changed since the last aging?", "Show the difference from the October report",
+])
+def test_a_request_to_compare_with_an_earlier_result_may_quote_it(request_text):
+    # Review: comparing a recurring report with the last one quotes its date
+    # and figures, and the check asked for them to be left out.
+    import datetime
+
+    from maverick.figure_totals import recalled_issues
+
+    answer = "Compared with the October 31, 2026 aging, 90+ fell from $23,707.69 to $20,100.00."
+    recalled = "result: AR aging as of October 31, 2026: 90+ $23,707.69"
+    today = datetime.date(2026, 11, 24)
+    assert recalled_issues(answer, recalled, "invoice,due\n1001,2026-08-15", request_text, today) == []
+    # Asked for no comparison, the earlier date counts as claimed; the figure
+    # the answer gives as the one it fell from does not.
+    assert [issue[:40] for issue in recalled_issues(answer, recalled, "invoice,due\n1001,2026-08-15",
+                                                    "Run the AR aging", today)] == [
+        "The answer gives October 31, 2026, which"]
+
+
+@pytest.mark.parametrize(("request_text", "day"), [
+    ("Prepare the Q3 sales summary", (2026, 9, 30)), ("The Q3-2026 summary", (2026, 9, 30)),
+    ("The Q3/2026 summary", (2026, 9, 30)), ("Summarize the third quarter", (2026, 9, 30)),
+    ("Draft next month's rent invoices", (2026, 12, 31)), ("Draft the January rent invoices", (2027, 1, 31)),
+    ("Run this week's payroll", (2026, 11, 27)), ("Run last week's payroll", (2026, 11, 20)),
+    ("Build the FY2026 budget", (2026, 12, 31)), ("Run the month-end AR aging", (2026, 10, 31)),
+    ("Total this year's payroll", (2026, 12, 31)), ("Run the monthly AR aging", (2026, 10, 31)),
+])
+def test_more_periods_a_request_names_clear_their_dates(request_text, day):
+    import datetime
+
+    from maverick.figure_totals import _long_date, recalled_issues
+
+    named = _long_date(datetime.date(*day))
+    today = datetime.date(2026, 11, 24)
+    assert recalled_issues(f"As of {named}.", f"result: as of {named}", "", request_text, today) == []
+
+
+@pytest.mark.parametrize(("answer", "request_text"), [
+    ("The lease runs from April 1, 2025 through March 31, 2029, and renewal requires 180 days' prior written "
+     "notice.", "When does the lease end?"),
+    ("Notice is due 180 days prior to the March 31, 2029 expiry.", "When does the lease end?"),
+    ("Per the previous lease summary, the lease expires on March 31, 2029.", "When does the lease end?"),
+    ("As previously reported, the lease expires March 31, 2029.", "When does the lease end?"),
+    ('Section 9 requires "prior written notice." The lease expires March 31, 2029.', "When does the lease end?"),
+    ("| Expiry | March 31, 2029 | prior written notice |", "When does the lease end?"),
+    ("The lease expires March 31, 2029.", "Our lease ends March 31. When must we give renewal notice?"),
+])
+def test_a_copied_date_beside_ordinary_words_is_still_named(answer, request_text):
+    # Review: "prior written notice", "per the previous summary" and a
+    # request's year-less "March 31" let a copied expiry through.
+    import datetime
+
+    from maverick.figure_totals import recalled_issues
+
+    issues = recalled_issues(answer, "result: The lease expires on March 31, 2029.", "2030-03-31", request_text,
+                             datetime.date(2026, 11, 24))
+    assert issues and issues[0].startswith("The answer gives March 31, 2029, which comes from a past task's result")
+
+
+@pytest.mark.parametrize(("request_text", "answer", "recalled"), [
+    ("Run payroll; some hours may be missing.", "Pay date: May 15, 2026.", "result: Pay date: May 15, 2026"),
+    ("Tenant pays 1/2 of the rent; when is it due?", "Rent is due January 2, 2027.",
+     "result: Rent due January 2, 2027"),
+    ("Run last month's AR aging.", "Acme's last payment was October 14, 2026.",
+     "result: Acme last paid October 14, 2026"),
+])
+def test_a_request_word_that_names_no_date_does_not_clear_one(request_text, answer, recalled):
+    # Review: "may" the verb cleared May, "1/2 of the rent" cleared January 2,
+    # and "last month" cleared every day of October.
+    import datetime
+
+    from maverick.figure_totals import recalled_issues
+
+    assert recalled_issues(answer, recalled, "2026-05-14\n2026-10-16", request_text, datetime.date(2026, 11, 24))
+
+
+def test_the_past_task_check_stays_fast_on_long_text():
+    # Review: a request's padding after a date backtracked quadratically, and
+    # 2,000,000 characters of tool output were read even with nothing recalled.
+    import datetime
+    import time
+
+    from maverick.figure_totals import _request_clears, recalled_issues
+
+    today = datetime.date(2026, 11, 24)
+    started = time.perf_counter()
+    for text in ("Report as of March 31" + " " * 40_000 + "x", "31 March" + "\n" * 40_000,
+                 "Totals for 2026" + " " * 40_000):
+        _request_clears(text, today)
+    evidence = "invoice,2026-10-31,4,850.00\n" * 70_000
+    assert recalled_issues("Total $4,850.00 as of October 31, 2026.", "", evidence, "", today) == []
+    assert time.perf_counter() - started < 2.0
+
+
+@pytest.mark.parametrize(("tool_text", "answer"), [
+    ("Ana Ruiz,37.5,18.75\n703.125", "Ana Ruiz: 37.5 h x $18.75 = $703.13 gross."),
+    ("110.925", "Employer Social Security: $110.93."),
+    ("833.333333333333", "Each partner gets $833.33."),
+    ("913.045", "Average invoice: $913.04."),
+])
+def test_a_tool_figure_rounded_to_cents_is_the_tools(tool_text, answer):
+    # Review: compute prints 37.5*18.75 as 703.125; on a payroll rerun whose
+    # past result gave the same correct $703.13, the answer went back twice
+    # and was marked unverified.
+    from maverick.figure_totals import recalled_issues
+
+    assert recalled_issues(answer, "result: " + answer, tool_text) == []
+    assert recalled_issues(answer, "result: " + answer, "12.5")
+
+
+@pytest.mark.parametrize(("tool_text", "answer"), [
+    ("10/15 ACME SUPPLY 89.99\n10/15 ACME SUPPLY 89.99", "ACME was charged twice on October 15, 2026."),
+    ("Week ending Sat 11/14/2026\nTue 11/10 8:00-16:30", "Dana worked a double on November 10, 2026."),
+    ("Oct 15 ACME SUPPLY", "ACME was charged twice on October 15, 2026."),
+])
+def test_a_day_a_tool_wrote_without_its_year_clears_this_years_date(tool_text, answer):
+    # Review: a statement's "10/15" did not clear the answer's October 15,
+    # 2026, which a past run on the same statement also gave.
+    import datetime
+
+    from maverick.figure_totals import recalled_issues
+
+    recalled = "result: posted twice on October 15, 2026; November 10, 2026"
+    today = datetime.date(2026, 11, 24)
+    assert recalled_issues(answer, recalled, tool_text, "", today) == []
+    # Three years on, the year-less day is no longer that date's.
+    assert recalled_issues(answer.replace("2026", "2029"), recalled.replace("2026", "2029"), tool_text, "", today)
+
+
+@pytest.mark.parametrize("answer", [
+    "Total outstanding: $3,200.00, down from $4,850.00 last month.",
+    "Total outstanding: $3,200.00 compared with $4,850.00 a month ago.",
+    "Last month's total was $4,850.00 in the previous report, which was wrong; it is $3,200.00.",
+    "$4,850.00 last month; $3,200.00 now.",
+])
+def test_a_figure_given_as_last_periods_is_not_called_copied(answer):
+    # Review: a monthly report that set this month's total beside last
+    # month's went back for last month's figure.
+    from maverick.figure_totals import recalled_issues
+
+    assert recalled_issues(answer, "result: Total outstanding $4,850.00", "3200") == []
+    assert recalled_issues("Total outstanding: $4,850.00.", "result: Total outstanding $4,850.00", "3200")
+
+
+@pytest.mark.parametrize(("request_text", "checked"), [
+    ("Compare November revenue with October.", False), ("How does November's revenue compare to October?", False),
+    ("November vs October revenue?", False), ("Revenue this month vs. last?", False),
+    ("How did we do versus Q3?", False), ("Compare 2026 with 2025 revenue", False),
+    ("Work out the Q4 payment and remind me what we paid for Q3", False),
+    ("Is it the same as last quarter?", False),
+    ("Budget versus actual for November", True), ("Prepare the November budget vs actual report", True),
+    ("Compare November actuals to budget", True), ("Compare the two vendor quotes", True),
+    ("Reconcile the bank statement; compare deposits with the ledger", True),
+])
+def test_only_a_comparison_with_an_earlier_period_may_quote_it(request_text, checked):
+    # Review: "compare November with October" sent October's figure back,
+    # while "budget versus actual" and "compare the two quotes" are no
+    # comparison with an earlier result and stay checked.
+    import datetime
+
+    from maverick.figure_totals import recalled_issues
+
+    answer = "| October | $4,850.00 |\n| November | $5,100.00 |"
+    issues = recalled_issues(answer, "result: October revenue: $4,850.00", "5100", request_text,
+                             datetime.date(2026, 11, 24))
+    assert bool(issues) is checked
+
+
+@pytest.mark.parametrize(("answer", "request_text"), [
+    ("November revenue is $5,100.00. Last month's revenue was $4,850.00.", "What was November's revenue?"),
+    ("November revenue is $5,100.00 (last month: $4,850.00).", "What was November's revenue?"),
+    ("November revenue is $5,100.00. Previous month: $4,850.00.", "What was November's revenue?"),
+    ("November revenue is $5,100.00, a 5.2% increase over last month's $4,850.00.", "What was November's revenue?"),
+    ("Total open is $5,100.00, down from October's $4,850.00.", "Run the November AR aging"),
+    ("Total open: $5,100.00 (October 31: $4,850.00).", "Run the November AR aging"),
+])
+def test_a_figure_named_by_an_earlier_period_is_that_periods(answer, request_text):
+    # Review: "Last month's revenue was $4,850.00" and "(October 31:
+    # $4,850.00)" beside this month's figure went back as copied.
+    from maverick.figure_totals import recalled_issues
+
+    assert recalled_issues(answer, "result: October revenue: $4,850.00", "5100", request_text) == []
+
+
+@pytest.mark.parametrize(("answer", "request_text"), [
+    ("Last month's revenue was $4,850.00.", "What was last month's revenue?"),
+    ("October's revenue was $4,850.00.", "What was October's revenue?"),
+    ("Revenue from sales of $4,850.00.", "What was November's revenue?"),
+])
+def test_a_figure_for_the_period_asked_about_is_a_claim(answer, request_text):
+    # Asked for last month's revenue, "last month's revenue was $4,850.00" is
+    # the answer itself, and a copy of a past result's figure is still named.
+    from maverick.figure_totals import recalled_issues
+
+    assert recalled_issues(answer, "result: October revenue: $4,850.00", "5100", request_text)
 
 
 def test_a_whole_amount_a_tool_returned_is_not_a_garbled_figure():
@@ -343,6 +677,335 @@ async def test_a_final_that_copies_a_past_tasks_date_is_revised(tmp_path, fake_l
     # compute returned 2028-10-02 from the copied expiry, so that date is its own.
     assert "October 2, 2028, which comes from" not in brief
     assert "2029-10-02" in world.get_goal(gid).result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("copied", [False, True])
+async def test_the_past_task_check_reads_every_tool_result(tmp_path, fake_llm, make_llm_response, monkeypatch,
+                                                           copied):
+    # Review: the check read only the newest 12,000 characters of tool
+    # output. Two long reads after the one that held "The Term ends on March
+    # 31, 2030" pushed it out, so a correct answer read as copied from a past
+    # result recalled last; and a recall made first dropped out, so a date
+    # copied from it went unchecked.
+    from types import SimpleNamespace
+
+    from maverick.llm import ToolCall
+    from maverick.tools import recall
+
+    (tmp_path / "terms.txt").write_text("The Term ends on March 31, 2030.\n")
+    for name in ("notes1.txt", "notes2.txt"):
+        (tmp_path / name).write_text("Clause text. " * 600)
+    past = SimpleNamespace(id=451, status="done", title="Lease summary",
+                           result=f"The lease ends March 31, {2029 if copied else 2030}.")
+    monkeypatch.setattr(recall, "recall_past_goals", lambda *a, **k: [(0.29, past)])
+    reads = [ToolCall(id=f"f{index}", name="read_file", input={"path": name})
+             for index, name in enumerate(("terms.txt", "notes1.txt", "notes2.txt"))]
+    recalling = ToolCall(id="r1", name="recall_past_goals", input={"query": "lease end"})
+    verdict = make_llm_response(text='{"confidence": 0.95, "accepts": true, "critique": "ok", "issues": []}')
+    fake_llm.scripted = [
+        make_llm_response(text="Checking.", tool_calls=[recalling, *reads] if copied else [*reads, recalling]),
+        make_llm_response(text=f"FINAL: The lease ends March 31, {2029 if copied else 2030}."),
+        *([make_llm_response(text="FINAL: The lease ends March 31, 2030.")] if copied else []),
+        verdict, make_llm_response(text="FINAL: (no skill)")]
+    world = WorldModel(path=tmp_path / "world.db")
+    gid = world.create_goal("when does the lease end?", "", owner="alice")
+
+    await run_goal(llm=fake_llm, world=world, budget=Budget(max_dollars=1.0), goal_id=gid,
+                   sandbox=LocalBackend(workdir=tmp_path), max_depth=1)
+
+    briefs = str([call.get("messages", "") for call in fake_llm.calls])
+    assert ("March 31, 2029, which comes from a past task's result" in briefs) is copied
+    assert "March 31, 2030, which comes from" not in briefs
+    assert "March 31, 2030" in world.get_goal(gid).result
+
+
+@pytest.mark.asyncio
+async def test_a_long_read_compacted_out_of_the_history_still_clears_a_date(tmp_path, fake_llm, make_llm_response,
+                                                                             monkeypatch):
+    # Review: compaction cuts a tool result over 2 KiB to a short preview once
+    # it is a few turns old. A rerun on the same lease, whose past result gave
+    # the same correct end date, went back for that date and was marked
+    # unverified.
+    from types import SimpleNamespace
+
+    from maverick.llm import ToolCall
+    from maverick.tools import recall
+
+    (tmp_path / "lease.txt").write_text(
+        "COMMERCIAL LEASE. " + "Standard clause text about maintenance and insurance. " * 80
+        + "\nTERM. The Term commences on April 1, 2025 and ends on March 31, 2030.\n"
+        + "Further clause text about assignment. " * 20)
+    past = SimpleNamespace(id=451, status="done", title="Lease summary for 12 Main St",
+                           result="Lease for 12 Main St runs April 1, 2025 to March 31, 2030.")
+    monkeypatch.setattr(recall, "recall_past_goals", lambda *a, **k: [(0.4, past)])
+    verdict = '{"confidence": 0.95, "accepts": true, "critique": "ok", "issues": []}'
+    fake_llm.scripted = [
+        make_llm_response(text="Recall.", tool_calls=[
+            ToolCall(id="r1", name="recall_past_goals", input={"query": "lease summary"})]),
+        make_llm_response(text="Read.", tool_calls=[ToolCall(id="f1", name="read_file", input={"path": "lease.txt"})]),
+        make_llm_response(text="Compute.", tool_calls=[ToolCall(id="c1", name="compute", input={
+            "op": "evaluate", "expr": "date('2025-04-01', '+12 months')"})]),
+        make_llm_response(text="Compute.", tool_calls=[ToolCall(id="c2", name="compute", input={
+            "op": "evaluate", "expr": "date('2025-04-01', '+24 months')"})]),
+        make_llm_response(text="FINAL: The lease for 12 Main St ends March 31, 2030."),
+        make_llm_response(text=verdict), make_llm_response(text="FINAL: (no skill)")]
+    world = WorldModel(path=tmp_path / "world.db")
+    gid = world.create_goal("Summarize the 12 Main St lease: when does it end?", "", owner="alice")
+
+    await run_goal(llm=fake_llm, world=world, budget=Budget(max_dollars=1.0), goal_id=gid,
+                   sandbox=LocalBackend(workdir=tmp_path), max_depth=1)
+
+    briefs = str([call.get("messages", "") for call in fake_llm.calls])
+    assert "<tool_output_preview" in briefs  # the lease read was compacted
+    assert "which comes from a past task's result" not in briefs
+    assert world.get_goal(gid).result.startswith("The lease for 12 Main St ends March 31, 2030.")
+
+
+@pytest.mark.asyncio
+async def test_a_date_a_child_recalled_and_copied_is_named_at_the_root(tmp_path, fake_llm, make_llm_response,
+                                                                       monkeypatch):
+    # Review: a child agent recalled a past answer with a year-early expiry
+    # and reported it; the root never saw the recall, and the child's report
+    # cleared the date. The child's own tools are kept on the run's shared
+    # context, and its report is its answer, not a tool's result.
+    from types import SimpleNamespace
+
+    from maverick.llm import ToolCall
+    from maverick.tools import recall
+
+    (tmp_path / "lease.txt").write_text("The Term commences on April 1, 2025 for sixty (60) months.")
+    past = SimpleNamespace(id=451, status="done", title="Lease summary",
+                           result="Last day to give notice: October 2, 2028. The lease expires on March 31, 2029.")
+    monkeypatch.setattr(recall, "recall_past_goals", lambda *a, **k: [(0.29, past)])
+    verdict = '{"confidence": 0.95, "accepts": true, "critique": "ok", "issues": []}'
+    fake_llm.scripted = [
+        make_llm_response(text="Delegate.", tool_calls=[ToolCall(id="s1", name="spawn_subagent", input={
+            "role": "analyst", "task": "Find when the 12 Main St lease (lease.txt) expires."})]),
+        make_llm_response(text="Child recall.", tool_calls=[
+            ToolCall(id="r1", name="recall_past_goals", input={"query": "lease expiry"}),
+            ToolCall(id="f1", name="read_file", input={"path": "lease.txt"})]),
+        make_llm_response(text="FINAL: The lease expires on March 31, 2029."),
+        make_llm_response(text="FINAL: The lease expires on March 31, 2029."),
+        make_llm_response(text="Rechecking.", tool_calls=[ToolCall(id="c1", name="compute", input={
+            "op": "evaluate", "expr": "date('2025-04-01', '+60 months', '-1 day')"})]),
+        make_llm_response(text="FINAL: The lease expires on 2030-03-31."),
+        make_llm_response(text=verdict), make_llm_response(text="FINAL: (no skill)"),
+        make_llm_response(text=verdict), make_llm_response(text="FINAL: (no skill)")]
+    world = WorldModel(path=tmp_path / "world.db")
+    gid = world.create_goal("When does the 12 Main St lease expire?", "", owner="alice")
+
+    await run_goal(llm=fake_llm, world=world, budget=Budget(max_dollars=1.0), goal_id=gid,
+                   sandbox=LocalBackend(workdir=tmp_path), max_depth=2)
+
+    briefs = str([call.get("messages", "") for call in fake_llm.calls])
+    assert "March 31, 2029, which comes from a past task's result" in briefs
+    assert "2030-03-31" in world.get_goal(gid).result
+
+
+_VERDICT = '{"confidence": 0.95, "accepts": true, "critique": "ok", "issues": []}'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("in_the_chat", [True, False])
+async def test_a_follow_up_may_repeat_the_figures_of_its_own_chat(tmp_path, fake_llm, make_llm_response,
+                                                                  monkeypatch, in_the_chat):
+    # Review: a follow-up's recall shows the chat's previous turn, and an
+    # email restating that turn's payroll went back for every figure in it.
+    from types import SimpleNamespace
+
+    from maverick.llm import ToolCall
+    from maverick.tools import recall
+
+    earlier = "Payroll: Ana Ruiz $703.13, Ben Okafor $1,647.38; total $2,350.51. Pay date November 27, 2026."
+    prev = SimpleNamespace(id=40, status="done", title="Run this week's payroll from hours.csv", result=earlier)
+    monkeypatch.setattr(recall, "recall_past_goals", lambda *a, **k: [(0.47, prev)])
+    answer = "FINAL: Hi Dana, this week's payroll: Ana Ruiz $703.13, Ben Okafor $1,647.38, total $2,350.51."
+    fake_llm.scripted = [
+        make_llm_response(text="Go.", tool_calls=[
+            ToolCall(id="r1", name="recall_past_goals", input={"query": "payroll totals"})]),
+        make_llm_response(text=answer), make_llm_response(text=answer),
+        make_llm_response(text=_VERDICT), make_llm_response(text="FINAL: (no skill)")]
+    world = WorldModel(path=tmp_path / "world.db")
+    conversation = world.get_or_create_conversation("web", "alice")
+    world.append_turn(conversation.id, "user", "Run this week's payroll from hours.csv")
+    world.append_turn(conversation.id, "assistant", earlier)
+    gid = world.create_goal("Draft a short email to Dana with those payroll totals", "", owner="alice")
+
+    await run_goal(llm=fake_llm, world=world, budget=Budget(max_dollars=1.0), goal_id=gid,
+                   sandbox=LocalBackend(workdir=tmp_path), max_depth=1,
+                   conversation_id=conversation.id if in_the_chat else None)
+
+    briefs = str([call.get("messages", "") for call in fake_llm.calls])
+    assert ("which comes from a past task's result" in briefs) is not in_the_chat
+
+
+@pytest.mark.asyncio
+async def test_a_figure_the_person_gave_earlier_in_the_chat_is_theirs(tmp_path, fake_llm, make_llm_response,
+                                                                     monkeypatch):
+    # Review: the person gave the rent two messages back; a past month's
+    # summary gave the same rent, and the answer went back for it.
+    from types import SimpleNamespace
+
+    from maverick.llm import ToolCall
+    from maverick.tools import recall
+
+    past = SimpleNamespace(id=30, status="done", title="September expenses", result="September: rent $4,326.00.")
+    monkeypatch.setattr(recall, "recall_past_goals", lambda *a, **k: [(0.4, past)])
+    answer = "FINAL: October expenses: rent $4,326.00."
+    fake_llm.scripted = [
+        make_llm_response(text="Go.", tool_calls=[
+            ToolCall(id="r1", name="recall_past_goals", input={"query": "expense summary"})]),
+        make_llm_response(text=answer), make_llm_response(text=answer),
+        make_llm_response(text=_VERDICT), make_llm_response(text="FINAL: (no skill)")]
+    world = WorldModel(path=tmp_path / "world.db")
+    conversation = world.get_or_create_conversation("web", "alice")
+    world.append_turn(conversation.id, "user", "FYI our rent for October was $4,326.00 again.")
+    world.append_turn(conversation.id, "assistant", "Noted.")
+    gid = world.create_goal("Now draft the October expense summary", "", owner="alice")
+
+    await run_goal(llm=fake_llm, world=world, budget=Budget(max_dollars=1.0), goal_id=gid,
+                   sandbox=LocalBackend(workdir=tmp_path), max_depth=1, conversation_id=conversation.id)
+
+    assert "which comes from a past task's result" not in str([call.get("messages", "") for call in fake_llm.calls])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("who", ["root", "child"])
+async def test_a_figure_typed_into_a_workbook_by_any_agent_counts_as_typed(tmp_path, fake_llm, make_llm_response,
+                                                                         monkeypatch, who):
+    # Review: a child's typed cell read back as a formula's result at the
+    # root, whose history does not hold the child's spreadsheet call, so a
+    # past task's total typed into the child's workbook passed.
+    from types import SimpleNamespace
+
+    from maverick.llm import ToolCall
+    from maverick.tools import recall
+
+    past = SimpleNamespace(id=380, status="done", title="Statement totals", result="Total deposits: $100,079.96.")
+    monkeypatch.setattr(recall, "recall_past_goals", lambda *a, **k: [(0.38, past)])
+    sheet = ToolCall(id="s1", name="spreadsheet", input={"op": "write", "path": "stmt.xlsx",
+                                                         "rows": [["Item", "Amount"], ["Total deposits", 100079.96]]})
+    recalling = ToolCall(id="r1", name="recall_past_goals", input={"query": "statement totals"})
+    work = ([make_llm_response(text="Save.", tool_calls=[sheet])] if who == "root" else [
+        make_llm_response(text="Delegate.", tool_calls=[ToolCall(id="d1", name="spawn_subagent", input={
+            "role": "bookkeeper", "task": "Write stmt.xlsx with the statement's total deposits."})]),
+        make_llm_response(text="Save.", tool_calls=[sheet]),
+        make_llm_response(text="FINAL: Done; the total deposits are in the sheet.")])
+    fake_llm.scripted = [make_llm_response(text="Recall.", tool_calls=[recalling]), *work,
+                         make_llm_response(text="FINAL: Total deposits: $100,079.96."),
+                         make_llm_response(text="FINAL: I could not total the deposits from this statement."),
+                         *[make_llm_response(text=text) for text in (_VERDICT, "FINAL: (no skill)") * 3]]
+    world = WorldModel(path=tmp_path / "world.db")
+    gid = world.create_goal("Total the deposits on this month's bank statement", "", owner="alice")
+
+    await run_goal(llm=fake_llm, world=world, budget=Budget(max_dollars=1.0), goal_id=gid,
+                   sandbox=LocalBackend(workdir=tmp_path), max_depth=2)
+
+    assert "100,079.96, which comes from a past task's result" in str([c.get("messages", "") for c in fake_llm.calls])
+
+
+@pytest.mark.asyncio
+async def test_a_specialists_report_does_not_clear_a_copied_date(tmp_path, fake_llm, make_llm_response, monkeypatch):
+    # Review: a specialist asked to "confirm" a recalled expiry repeated it,
+    # and its report cleared the date at the root.
+    from types import SimpleNamespace
+
+    from maverick.llm import ToolCall
+    from maverick.tools import recall
+
+    (tmp_path / "lease.txt").write_text("The Term commences on April 1, 2025 for sixty (60) months.")
+    past = SimpleNamespace(id=451, status="done", title="Lease summary", result="The lease expires on March 31, 2029.")
+    monkeypatch.setattr(recall, "recall_past_goals", lambda *a, **k: [(0.29, past)])
+    task = "The earlier summary says the lease expires March 31, 2029. Confirm the expiry from lease.txt."
+    fake_llm.scripted = [
+        make_llm_response(text="Recall.", tool_calls=[
+            ToolCall(id="r1", name="recall_past_goals", input={"query": "lease expiry"})]),
+        make_llm_response(text="Delegate.", tool_calls=[ToolCall(id="s1", name="spawn_specialist", input={
+            "domain": "ag_farm_finance", "task": task})]),
+        make_llm_response(text="FINAL: Confirmed: the lease expires on March 31, 2029."),
+        make_llm_response(text="FINAL: The lease expires on March 31, 2029."),
+        make_llm_response(text="FINAL: The lease runs 60 months from April 1, 2025."),
+        *[make_llm_response(text=text) for text in (_VERDICT, "FINAL: (no skill)") * 3]]
+    world = WorldModel(path=tmp_path / "world.db")
+    gid = world.create_goal("When does the 12 Main St lease expire?", "", owner="alice")
+
+    await run_goal(llm=fake_llm, world=world, budget=Budget(max_dollars=1.0), goal_id=gid,
+                   sandbox=LocalBackend(workdir=tmp_path), max_depth=2)
+
+    assert "March 31, 2029, which comes from a past task's result" in str(
+        [call.get("messages", "") for call in fake_llm.calls])
+
+
+async def _paused_and_resumed(tmp_path, fake_llm, make_llm_response, monkeypatch, before, after, past_date, answer):
+    from types import SimpleNamespace
+
+    from maverick.llm import ToolCall
+    from maverick.tools import recall
+
+    monkeypatch.setenv("MAVERICK_DURABLE", "1")
+    (tmp_path / "lease.txt").write_text("TERM. The Term commences on April 1, 2025 and ends on March 31, 2030.")
+    past = SimpleNamespace(id=451, status="done", title="Lease summary", result=f"The lease ends {past_date}.")
+    monkeypatch.setattr(recall, "recall_past_goals", lambda *a, **k: [(0.4, past)])
+    world = WorldModel(path=tmp_path / "world.db")
+    gid = world.create_goal("When does the 12 Main St lease end?", "", owner="alice")
+    fake_llm.scripted = [make_llm_response(text="Work.", tool_calls=before),
+                         make_llm_response(text="Ask.", tool_calls=[ToolCall(
+                             id="a1", name="ask_user", input={"question": "Which tenant copy?"})])]
+    await run_goal(fake_llm, world, Budget(max_dollars=1.0), gid, sandbox=LocalBackend(workdir=tmp_path), max_depth=1)
+    assert world.get_goal(gid).status == "blocked"
+    world.answer(world.all_questions(gid)[0].id, "The signed copy.")
+    start = len(fake_llm.calls)
+    fake_llm.scripted = [*after, make_llm_response(text=f"FINAL: The lease ends {answer}."),
+                         make_llm_response(text="FINAL: The lease ends March 31, 2030."),
+                         *[make_llm_response(text=text) for text in (_VERDICT, "FINAL: (no skill)") * 2]]
+    await run_goal(fake_llm, world, Budget(max_dollars=1.0), gid, sandbox=LocalBackend(workdir=tmp_path),
+                   max_depth=1, resume=True)
+    return str([call.get("messages", "") for call in fake_llm.calls[start:]])
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_run_still_reads_what_it_did_before_the_pause(tmp_path, fake_llm, make_llm_response,
+                                                                      monkeypatch):
+    # Review: a run resumed from its checkpoint kept tool outputs only from
+    # the resume on, so the lease read before the pause no longer cleared its
+    # correct end date, and a recall made before the pause went unchecked.
+    from maverick.llm import ToolCall
+
+    read = ToolCall(id="f1", name="read_file", input={"path": "lease.txt"})
+    recalling = ToolCall(id="r1", name="recall_past_goals", input={"query": "lease end"})
+    resumed = await _paused_and_resumed(tmp_path, fake_llm, make_llm_response, monkeypatch, before=[read],
+                                        after=[make_llm_response(text="Recall.", tool_calls=[recalling])],
+                                        past_date="March 31, 2030", answer="March 31, 2030")
+    assert "which comes from a past task's result" not in resumed
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_run_still_checks_a_recall_made_before_the_pause(tmp_path, fake_llm, make_llm_response,
+                                                                         monkeypatch):
+    from maverick.llm import ToolCall
+
+    recalling = ToolCall(id="r1", name="recall_past_goals", input={"query": "lease end"})
+    resumed = await _paused_and_resumed(tmp_path, fake_llm, make_llm_response, monkeypatch, before=[recalling],
+                                        after=[], past_date="March 31, 2029", answer="March 31, 2029")
+    assert "March 31, 2029, which comes from a past task's result" in resumed
+
+
+def test_kept_tool_output_is_bounded_and_keeps_every_recall():
+    # Review: past the bound the oldest output went first, and the oldest is
+    # usually the recall, so the check silently stopped.
+    from types import SimpleNamespace
+
+    from maverick import agent
+
+    ctx = SimpleNamespace(tool_outputs=[], tool_output_chars=0)
+    recall_frame = "<tool_output tool='recall_past_goals' id=ab12>\nresult: Total $100,079.96\n</tool_output ab12>"
+    agent._keep_tool_output(ctx, recall_frame)
+    for index in range(80):
+        agent._keep_tool_output(ctx, f"<tool_output tool='read_file' id={index:04x}>\n" + "x" * 32_000)
+    assert ctx.tool_outputs[0] == recall_frame
+    assert ctx.tool_output_chars == sum(map(len, ctx.tool_outputs)) <= agent._KEPT_OUTPUT_CHARS
+    agent._keep_tool_output(SimpleNamespace(), "ignored without a kept list")
 
 
 @pytest.mark.asyncio

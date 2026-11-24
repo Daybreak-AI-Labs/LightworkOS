@@ -1841,6 +1841,42 @@ def _observation_post(output: str, limit: int = _OBSERVATION_POST_CHARS) -> str:
 
 
 _VERIFIER_EVIDENCE_CHARS = 12_000
+#: Tool output kept for the past-task check; past the bound the oldest goes
+#: first, never a recall, which the check cannot do without.
+_KEPT_OUTPUT_CHARS = 2_000_000
+#: A report from a child agent that shares this run: its answer, not a
+#: tool's result. The child's own tool outputs are kept beside it.
+_SPAWNED = re.compile(r"<tool_output tool='spawn_(?:subagent|swarm|specialist)' id=([0-9a-f]+)>.*?</tool_output \1>", re.DOTALL)
+
+
+def _keep_tool_output(ctx: Any, output: Any, name: str = "", args: Any = None) -> None:
+    """Keep ``output`` on the run's shared context. Compaction cuts the
+    message history: a lease read two turns back became a short preview, and
+    the past-task check called the answer's correct end date copied from a
+    past result that gave the same date."""
+    kept = getattr(ctx, "tool_outputs", None)
+    if not isinstance(kept, list) or not isinstance(output, str) or not output.strip():
+        return
+    if name == "spreadsheet" and isinstance(args, dict):
+        # The calling agent's typed values are known only here: a child's
+        # spreadsheet call is not in the root's message history.
+        output = _figure_evidence([{"role": "assistant", "content": [
+            {"type": "tool_use", "name": "spreadsheet", "input": args}]}], outputs=[str(output)])
+    kept.append(output)
+    ctx.tool_output_chars = getattr(ctx, "tool_output_chars", 0) + len(output)
+    while ctx.tool_output_chars > _KEPT_OUTPUT_CHARS:
+        oldest = next((index for index, text in enumerate(kept[:-1])
+                       if "tool='recall_past_goals'" not in text[:80]), None)
+        if oldest is None:
+            break
+        ctx.tool_output_chars -= len(kept.pop(oldest))
+
+
+def _history_results(messages: list[dict]) -> list[str]:
+    """The tool results in a run's message history, as written there."""
+    return [block["content"] for message in messages if isinstance(message, dict) and message.get("role") == "user"
+            and isinstance(message.get("content"), list) for block in message["content"]
+            if isinstance(block, dict) and block.get("type") == "tool_result" and isinstance(block.get("content"), str)]
 
 
 _REFUSALS = ("not approved", "is denied by the current tool acl")
@@ -1973,14 +2009,17 @@ _READBACK = re.compile(r"(<tool_output tool='spreadsheet' id=([0-9a-f]+)>\n(?:(?
                        r"(\nWhat the file now holds.*?)(\n</tool_output \2>)", re.DOTALL)
 
 
-def _figure_evidence(messages: list[dict]) -> str:
+def _figure_evidence(messages: list[dict], limit: int = _VERIFIER_EVIDENCE_CHARS,
+                     outputs: list[str] | None = None) -> str:
     """The run's tool results for the figure checks, each spreadsheet write's
     read-back cut to the figures the file's formulas worked out, in cents. A
     read-back repeats what the agent typed into the file, so a typed figure
     (Ben's pay as 1,647.56 when compute gave 1,647.38) read as one a tool
     returned. A formula's result is the tool's own work: left out, a correct
     $100,079.96 that a =SUM gave went back as copied from a past task, and
-    unrounded, 833.3333333333 sent back a correct $833.33."""
+    unrounded, 833.3333333333 sent back a correct $833.33. ``limit`` bounds
+    the characters kept, newest results first; ``outputs`` (the run's kept
+    tool outputs) stands in for the message history's results."""
     from decimal import ROUND_HALF_UP, Decimal
 
     from .figure_totals import _returned_figures
@@ -2012,7 +2051,12 @@ def _figure_evidence(messages: list[dict]) -> str:
         held = " ".join(filter(None, map(cents, figures)))
         return match.group(1) + (f"\nThe file's formulas worked out: {held}" if held else "") + match.group(4)
 
-    return _READBACK.sub(worked_out, _verifier_evidence(messages))
+    if outputs is None:
+        return _READBACK.sub(worked_out, _verifier_evidence(messages, limit))
+    # Each result on its own: one quoting a read-back frame it does not close
+    # cannot make the pattern scan the rest of the run.
+    return "\n\n".join(_READBACK.sub(worked_out, text) for text in outputs
+                        if not _tool_call_failed(text) or _is_refusal(text))
 
 
 def _tool_result_limit(model: str | None = None) -> int:
@@ -3039,6 +3083,21 @@ class Agent:
             hidden = {n for n in registered if not cap.permits(n)}
             core -= hidden
         return core, hidden
+
+    def _conversation_answers(self) -> str:
+        """This chat's earlier messages, the person's and the answers they
+        have seen. A follow-up's recall shows the chat's previous turn, and the
+        figures it repeats from that turn, or the rent the person gave two
+        messages back, are no copy from a past task."""
+        conversation_id = getattr(self.ctx, "conversation_id", None)
+        world = getattr(self.ctx, "world", None)
+        if conversation_id is None or world is None:
+            return ""
+        try:
+            return "\n" + "\n".join(turn.content for turn in world.recent_turns(conversation_id, limit=50)
+                                     if turn.role in ("user", "assistant") and turn.content)
+        except Exception:  # noqa: BLE001 -- a missing history only narrows what clears
+            return ""
 
     def _skill_query(self) -> str:
         """The text skills are matched against.
@@ -6672,13 +6731,28 @@ class Agent:
         # result, but what the file's formulas worked out is; the model
         # verifier below still sees the whole read-back.
         evidence = _figure_evidence(st.messages)
-        recalled = "\n".join(match.group(0) for match in _RECALLED.finditer(evidence))
+        # The past-task check reads every tool output of the run, kept apart
+        # from the history: in the history, compaction cut a lease read to a
+        # preview, so its correct end date read as copied from a past result,
+        # and the newest 12,000 characters had dropped an earlier recall. A
+        # child's recall counts, and a child's report is its answer, not a
+        # tool's result.
+        kept = getattr(self.ctx, "tool_outputs", None)
+        everything = evidence
+        if isinstance(kept, list):
+            # A run resumed from a checkpoint keeps outputs only from the
+            # resume on; its restored history holds the earlier results.
+            seen = set(kept)
+            everything = _figure_evidence(st.messages, outputs=[
+                *kept, *(text for text in _history_results(st.messages) if text not in seen)])
+        recalled = "\n".join(match.group(0) for match in _RECALLED.finditer(everything))
         # Figures the person's request states are theirs to quote ("the report
         # shows $1,647.56"); an earlier answer in the chat is not, so a wrong
         # figure repeated from it is still caught.
         request = self._skill_query()
         if issues := (answer_issues(final) + drift_issues(final, evidence, request) + percent_issues(final)
-                      + recalled_issues(final, recalled, _RECALLED.sub("", evidence), request)):
+                      + recalled_issues(final, recalled, _SPAWNED.sub("", _RECALLED.sub("", everything))
+                                        + self._conversation_answers(), request)):
             from .verifier import VerifierVerdict
             verification.attempted = True
             verification.verdict = VerifierVerdict(
@@ -7036,7 +7110,9 @@ class Agent:
 
         async def _run_capped(tc):
             async with _netcc.limit(tc.name, tc.input):
-                return await self._run_tool(tc.name, tc.input)
+                output = await self._run_tool(tc.name, tc.input)
+            _keep_tool_output(self.ctx, output, tc.name, tc.input)
+            return output
 
         # return_exceptions=True: tools.run swallows its own errors, but the
         # shield scan / PreToolUse hooks inside _run_tool can still raise, and
@@ -7156,6 +7232,7 @@ class Agent:
                 # Model-written arguments can decode to null, a list or a string.
                 output = (await self._run_tool(tc.name, tc.input) if isinstance(tc.input, dict)
                           else _NotExecutedToolResult("ERROR: tool input must be a JSON object"))
+                _keep_tool_output(self.ctx, output, tc.name, tc.input)
             except (AuditRefused, BudgetExceeded, UsageAccountingError, killswitch.Halted,
                     GoalCancelled) as exc:
                 _stop_reason = "audit refused" if isinstance(exc, AuditRefused) else type(exc).__name__

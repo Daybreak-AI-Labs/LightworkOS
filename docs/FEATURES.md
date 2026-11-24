@@ -292,9 +292,23 @@ Settings and the installation wizard.
   expiry a year early and repeated it). Figures the person's request states,
   and a whole amount a tool printed without cents (4326 for $4,326.00),
   count as theirs, and a figure a tool returned with more decimals and the
-  answer rounds to cents is the tool's own; a date a tool returned in any
-  form, the request's dates, today's, and one the answer rules out ("not
-  October 3") are not copied.
+  answer rounds to cents is the tool's own. A date is not copied when any
+  tool of the run returned it, in any form a file writes ("the 31st day of
+  March, 2030", 31-Mar-2030, 03-31-2030, "Oct 1-31, 2026"); when the request
+  states it or names a period it ends ("as of 10/31", "October 2026", "Q3",
+  "last month", "FY2026"); when it is today's; or when the answer rules it
+  out or corrects it ("not October 3", "corrected from October 3", the old
+  and new date on one line). A tool's figure rounded to cents (703.125 for
+  $703.13) and a day a tool wrote without its year ("10/15") within a year
+  of today are the tool's; a figure the answer gives as last period's ("down
+  from $4,850.00") is no claim; this chat's earlier answers count as seen;
+  and a request to compare with an earlier result or period ("compare with
+  last month", "year over year") may quote it. The check reads every tool
+  output of the run, the root's and its child agents', kept apart from the
+  message history that compaction cuts (and, after a resume, the restored
+  history too); a child's or specialist's report counts as its answer, not a
+  tool's result, and a workbook a child wrote counts its typed cells as
+  typed.
 - **Agents propose schedules; a person creates them** (`schedule_proposals.py`,
   `tools/propose_schedule.py`) — asked for recurring work ("every Monday at
   9am ..."), an agent records a proposal: the work each run does, a checked

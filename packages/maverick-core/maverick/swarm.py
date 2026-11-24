@@ -104,6 +104,11 @@ class SwarmContext:
     # run-scoped roster. Agent tools must be both namespaced and roster-bound,
     # so learning another run's display id cannot route a message into it.
     bus_namespace: str = field(default_factory=_new_bus_namespace, init=False)
+    # Every tool output of the run, the root's and its children's, kept apart
+    # from the message history that compaction cuts, for the past-task check
+    # (agent._keep_tool_output).
+    tool_outputs: list[str] = field(default_factory=list, init=False, repr=False)
+    tool_output_chars: int = field(default=0, init=False, repr=False)
     _bus_agents: set[str] = field(default_factory=set, init=False, repr=False)
     _bus_agents_lock: threading.Lock = field(
         default_factory=threading.Lock, init=False, repr=False,
