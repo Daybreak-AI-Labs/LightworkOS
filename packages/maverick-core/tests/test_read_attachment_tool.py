@@ -643,3 +643,26 @@ def test_tables_are_loaded_where_sqlite_reads_them_and_nowhere_else(tmp_path):
     # Read as a table, a file that cannot be loaded still says why.
     out = tool.fn({"id": orders, "sql": "SELECT * FROM amount"})
     assert out.startswith("ERROR") and "amount.csv" in out, out
+
+
+def test_a_table_of_clock_times_read_as_text_points_at_hours(tmp_path):
+    # Live: a Word timesheet read as text had its 7:00-15:30 shifts worked out
+    # by hand as 7.5 paid hours, then 45.25 for a 40.75-hour week, and the
+    # payroll came out $160 high; sql with hours() was never tried.
+    from maverick.attachments import generate_companions
+
+    world = WorldModel(tmp_path / "w.db")
+    gid = world.create_goal("g", "")
+    _add(world, gid, tmp_path, "timesheet.docx", _DOCX, _timesheet_docx())
+    shifts = _add(world, gid, tmp_path, "shifts.csv", "text/csv", b"name,shift\nAna,22:00-06:00\n")
+    notes = _add(world, gid, tmp_path, "notes.txt", "text/plain", b"Standup 9:00-9:15 daily")
+    assert generate_companions(world, gid, root=tmp_path / "a") == 1
+    companion = next(a.id for a in world.list_attachments(gid) if a.filename.endswith(".extracted.txt"))
+    tool = read_attachment_tool(world, gid)
+    for out in (tool.fn({"id": companion}), tool.fn({"id": companion, "search": "Dana"})):
+        assert "Note: this table holds clock times such as 7:00-15:30" in out, out
+        assert "hours('7:00-15:30') is 8.5" in out
+    assert "hours('22:00-06:00') is 8" in tool.fn({"id": shifts})
+    # Plain text with no table to query gets no note, and neither does a query.
+    assert "Note: this table" not in tool.fn({"id": notes})
+    assert "Note: this table" not in tool.fn({"id": shifts, "sql": "SELECT hours(shift) AS h FROM data"})

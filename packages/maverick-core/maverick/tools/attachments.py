@@ -146,7 +146,8 @@ def read_attachment_tool(world, goal_id: int | None, sandbox=None) -> Tool:
                 return text
             if args.get("sql"):
                 return _pdf_table_query(match.filename, text, str(args["sql"]), others)
-            return _window(text, args)
+            shown = _window(text, args)
+            return shown + _clock_note(shown)
         source = _companion_source(world, goal_id, match) if args.get("sql") else None
         if source is not None:
             # Live: `sql` on a timesheet's .extracted.txt was refused as "not a
@@ -173,7 +174,10 @@ def read_attachment_tool(world, goal_id: int | None, sandbox=None) -> Tool:
             return f"ERROR: {match.filename} could not be read: {exc}"
         if args.get("sql"):
             return query_table(match.filename, match.mime, text, str(args["sql"]), others)
-        return _window(text, args)
+        shown = _window(text, args)
+        if _is_csv(match.filename, match.mime) or _companion_source(world, goal_id, match) is not None:
+            shown += _clock_note(shown)
+        return shown
 
     return Tool(
         name="read_attachment",
@@ -361,6 +365,29 @@ def _rows_csv(rows: list[list[str]]) -> str:
     out = io.StringIO()
     csv.writer(out, lineterminator="\n").writerows(rows)
     return out.getvalue()
+
+
+# A shift written as a clock range: 7:00-15:30, 9:00 AM - 5:30 PM.
+_CLOCK_RANGE = re.compile(r"(?<![\d:])\d{1,2}:\d{2}(?:\s*[AaPp]\.?[Mm]\.?)?\s*[-\u2013]\s*\d{1,2}:\d{2}"
+                          r"(?:\s*[AaPp]\.?[Mm]\.?)?(?![\d:])")
+
+
+def _clock_note(shown: str) -> str:
+    """A note pointing at `sql` and hours() when the text a read returns holds
+    shift times. Live: read as text, a Word timesheet's 7:00-15:30 shifts were
+    worked out by hand as 7.5 paid hours, then 45.25 for a 40.75-hour week,
+    and the payroll was $160 too high."""
+    from .csv_query import _shift_hours
+
+    for found in _CLOCK_RANGE.finditer(shown):
+        hours = _shift_hours(found.group(0))
+        if hours is not None:
+            figure = int(hours) if float(hours).is_integer() else round(hours, 4)
+            return (f"\n\nNote: this table holds clock times such as {found.group(0)}. Work hours out "
+                    f"with `sql` on this file, not by hand: hours('{found.group(0)}') is {figure}, a shift "
+                    "past midnight counts on, and a lunch rule is a CASE, as in SELECT Employee, "
+                    "hours(Mon) - CASE WHEN hours(Mon) > 6 THEN 0.5 ELSE 0 END AS mon FROM data.")
+    return ""
 
 
 def _companion_source(world, goal_id, match):
