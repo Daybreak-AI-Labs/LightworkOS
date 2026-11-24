@@ -104,6 +104,7 @@ def record(world, goal_id, workdir, target, *, delivered: bool = False) -> TaskF
 
 _DRAFTS = (".md", ".markdown", ".txt")
 _DOCUMENTS = (".docx", ".pptx", ".pdf", ".xlsx", ".xlsm")
+_SPREADSHEETS = (".xlsx", ".xlsm")
 
 
 def _drafts(keys: list[tuple[str, str]], delivered: set[tuple[str, str]]) -> set[tuple[str, str]]:
@@ -112,17 +113,25 @@ def _drafts(keys: list[tuple[str, str]], delivered: set[tuple[str, str]]) -> set
     "-plan"): the draft or plan the document was made from. Asked for an NDA
     as a Word file, the page offered the Markdown draft first; asked for a
     workbook, it offered "region_sales_workbook_instructions.md" first."""
-    documents = {(workdir, str(Path(path).with_suffix(""))) for workdir, path in keys
-                 if Path(path).suffix.lower() in _DOCUMENTS}
+    def stems(suffixes: tuple[str, ...]) -> set[tuple[str, str]]:
+        return {(workdir, str(Path(path).with_suffix(""))) for workdir, path in keys
+                if Path(path).suffix.lower() in suffixes}
 
-    def named_like(workdir: str, path: str) -> bool:
+    documents, spreadsheets = stems(_DOCUMENTS), stems(_SPREADSHEETS)
+
+    def named_like(workdir: str, path: str, among: set[tuple[str, str]]) -> bool:
         stem = str(Path(path).with_suffix(""))
         return any(w == workdir and (stem == doc or stem.startswith(doc + "_") or stem.startswith(doc + "-"))
-                   for w, doc in documents)
+                   for w, doc in among)
 
-    return {(workdir, path) for workdir, path in keys
-            if Path(path).suffix.lower() in _DRAFTS and (workdir, path) not in delivered
-            and named_like(workdir, path)}
+    def draft(workdir: str, path: str) -> bool:
+        suffix = Path(path).suffix.lower()
+        # A CSV beside a workbook of its name is the workbook's working copy
+        # (a content calendar came as .csv and .xlsx); a CSV is kept otherwise.
+        return (suffix in _DRAFTS and named_like(workdir, path, documents)
+                or suffix == ".csv" and named_like(workdir, path, spreadsheets))
+
+    return {(workdir, path) for workdir, path in keys if (workdir, path) not in delivered and draft(workdir, path)}
 
 
 def files_for(world, goal_id: int) -> list[TaskFile]:

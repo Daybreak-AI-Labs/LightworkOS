@@ -123,11 +123,17 @@ def test_a_markdown_draft_of_a_document_is_not_offered_unless_delivered(task):
     # Live: a workbook's plan, "region_sales_workbook_instructions.md".
     assert write.fn({"path": "nda_instructions.md", "content": "plan\n"}).startswith("wrote")
     assert write.fn({"path": "ndaxyz.md", "content": "a different name\n"}).startswith("wrote")
+    # A CSV beside a workbook of its name is its working copy; beside a Word
+    # file it is a file of its own.
+    assert write.fn({"path": "calendar.csv", "content": "a,b\n1,2\n"}).startswith("wrote")
+    (workspace / "calendar.xlsx").write_bytes(b"PK fake workbook")
+    deliver_file(sandbox, gid, world).fn({"path": "calendar.xlsx"})
+    assert write.fn({"path": "nda.csv", "content": "a,b\n"}).startswith("wrote")
     listed = task_files.files_for(world, gid)
     assert [(f.number, f.path) for f in listed] == [(1, "nda.docx"), (2, "notes/nda.md"), (3, "summary.md"),
-                                                   (4, "ndaxyz.md")]
+                                                   (4, "ndaxyz.md"), (5, "calendar.xlsx"), (6, "nda.csv")]
     assert task_files.read_for_download(world, gid, 1)[0].name == "nda.docx"
     # Handed over on purpose, the draft is offered too.
     deliver_file(sandbox, gid, world).fn({"path": "nda.md"})
     assert [f.path for f in task_files.files_for(world, gid)] == ["nda.md", "nda.docx", "notes/nda.md", "summary.md",
-                                                                  "ndaxyz.md"]
+                                                                  "ndaxyz.md", "calendar.xlsx", "nda.csv"]
