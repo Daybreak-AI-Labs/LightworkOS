@@ -456,3 +456,86 @@ def test_a_date_expression_that_cannot_run_quotes_what_the_agent_wrote(monkeypat
     out = compute().fn({"op": "evaluate", "expr": expr})
     assert out.startswith(f"ERROR: cannot evaluate {expr!r}") and problem in out, out
     assert hidden not in out.split(f"{expr!r}", 1)[1] and "'-30 days'" in out, out
+
+
+@pytest.mark.parametrize("sympy_missing", [False, True])
+@pytest.mark.parametrize("expr", [
+    "julianday(strftime('%Y', '2030-03-31')) - 180",
+    "julianday(strftime('%H.%M', '2026-01-01 17:30')) - julianday(strftime('%H.%M', '2026-01-01 08:45'))",
+    "julianday('2030') - 180",
+    "julianday(2030) - 180",
+    "unixepoch(strftime('%Y', '2030-03-31')) / 86400",
+    "julianday('20300331') - julianday('20291002')",
+    "date('17.30')",
+])
+def test_a_number_a_date_function_would_read_as_a_day_number_is_refused(monkeypatch, sympy_missing, expr):
+    # Review: SQLite reads numeric text such as '2030' or '17.30' as a Julian
+    # day number, so date text wrapped in julianday() still came back 1850
+    # and 8.85 hours with no error.
+    import sys as _sys
+    if sympy_missing:
+        monkeypatch.setitem(_sys.modules, "sympy", None)
+    from maverick.tools.compute import compute
+    out = compute().fn({"op": "evaluate", "expr": expr})
+    assert out.startswith("ERROR") and "1850" not in out and "8.85" not in out, out
+    assert "YYYY-MM-DD" in out, out
+
+
+@pytest.mark.parametrize("sympy_missing", [False, True])
+@pytest.mark.parametrize(("expr", "expected"), [
+    ("ROUND((julianday('2026-01-01 17:30') - julianday('2026-01-01 08:45')) * 24, 2)", "8.75"),
+    ("ROUND(JULIANDAY('2026-03-01') - JULIANDAY('2026-01-31'))", "29"),
+    ("ABS(julianday('2026-01-31') - julianday('2026-03-01'))", "29"),
+    ("MAX(julianday('2026-01-31'), julianday('2026-03-01')) - julianday('2026-01-01')", "59"),
+    ("Round(julianday('2026-03-01') - julianday('2026-01-31'), 0)", "29"),
+    ("julianday(datetime('2026-03-01 08:00')) - julianday('2026-03-01')", "0.333333333333333"),
+])
+def test_wrappers_around_date_figures_read_in_any_case(monkeypatch, sympy_missing, expr, expected):
+    # Review: SQLite once ran the whole expression and read ROUND, ABS and
+    # MAX in any case; with only the date calls going to SQLite they were
+    # refused as "function not allowed".
+    import sys as _sys
+    if sympy_missing:
+        monkeypatch.setitem(_sys.modules, "sympy", None)
+    elif not _HAS_SYMPY:
+        pytest.skip("sympy not installed")
+    from maverick.tools.compute import compute
+    out = compute().fn({"op": "evaluate", "expr": expr})
+    assert out[:len(expected)] == expected or round(float(out), 9) == round(float(expected), 9), out
+
+
+@pytest.mark.parametrize("sympy_missing", [False, True])
+@pytest.mark.parametrize("expr", [
+    "max(℘℘℘℘℘7, date('2026-01-01'))",
+    "℮℮℮℮℮3, date('2026-01-01')",
+    "℘℘℘℘℘0, date('2026-01-01')",
+    "max(℘, date('2026-01-01'))",
+    "_date0, date('2026-01-01')",
+])
+def test_a_stray_name_beside_date_text_is_refused_not_read_as_the_date(monkeypatch, sympy_missing, expr):
+    # Review: a name made of characters Python allows in identifiers but the
+    # word scan skipped raised IndexError out of the tool, or was read as the
+    # date standing beside it.
+    import sys as _sys
+    if sympy_missing:
+        monkeypatch.setitem(_sys.modules, "sympy", None)
+    from maverick.tools.compute import compute
+    out = compute().fn({"op": "evaluate", "expr": expr})
+    assert out.startswith("ERROR") and "2026-01-01, 2026-01-01" not in out, out
+
+
+@pytest.mark.parametrize("sympy_missing", [False, True])
+@pytest.mark.parametrize("expr", [
+    "max(timediff('2026-03-01', '2026-01-31'), timediff('2026-01-31', '2026-03-01'))",
+    "max(strftime('%s', '2030-03-31'), strftime('%s', '1999-01-01'))",
+    "max(strftime('%m/%d/%Y', '2030-03-09'), strftime('%m/%d/%Y', '2029-12-10'))",
+])
+def test_max_and_min_pick_only_among_dates_written_year_first(monkeypatch, sympy_missing, expr):
+    # Review: max() and min() compare the text, which is date order only for
+    # YYYY-MM-DD; the later of 2030 and 1999 as seconds came back 1999's.
+    import sys as _sys
+    if sympy_missing:
+        monkeypatch.setitem(_sys.modules, "sympy", None)
+    from maverick.tools.compute import compute
+    out = compute().fn({"op": "evaluate", "expr": expr})
+    assert out.startswith("ERROR") and "YYYY-MM-DD" in out, out

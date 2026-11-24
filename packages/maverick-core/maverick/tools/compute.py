@@ -330,6 +330,23 @@ _DATE_TEXT_LIMIT = 1000
 _WORD = re.compile(r"\w+")
 _OPENING = re.compile(r"\s*\(")
 _DATE_ARGUMENT = re.compile(r"""\s+|,|\(|\)|'(?:[^']|'')*'|"(?:[^"]|"")*"|\d+(?:\.\d+)?(?![\w.])|(\w+)\s*\(""")
+# What may stand between the date calls: arithmetic and the words above.
+_ARITHMETIC = frozenset(" \t\r\n+-*/%^().,")
+# A number given as a date is a Julian day number unless a modifier says it
+# is seconds: julianday('2030') - 180 came back 1850, and the hours from
+# '17.30' and '08.45' came back 8.85. A day number is let through only
+# between 0000-01-01 and 9999-12-31, the days SQLite's dates cover.
+_NUMBER_AS_DATE = re.compile(r"\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+)\s*")
+_NUMBER_MODIFIERS = frozenset({"unixepoch", "julianday", "auto"})
+_DAY_NUMBERS = (1721059.5, 5373484.5)
+# Text these give may read as a number, so another date call never takes it.
+_TEXT_ONLY_CALLS = frozenset({"strftime", "time", "timediff"})
+_NUMBER_AS_DATE_PROBLEM = ("a date function reads {0} as a day number in 4713 BC, not as a date; write the date "
+                           "in quotes as YYYY-MM-DD, or add 'unixepoch' when it is seconds since 1970")
+# max() and min() compare text, which is date order only for these forms.
+_ORDERED_DATE_TEXT = re.compile(r"\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?"
+                                r"|\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?")
+_PLACEHOLDER = re.compile(r"_date(\d+)")
 
 
 def _date_call_end(expr: str, i: int, name: str) -> tuple[int, str]:
@@ -362,6 +379,58 @@ def _date_call_end(expr: str, i: int, name: str) -> tuple[int, str]:
     return i, "".join(sql)
 
 
+def _check_date_values(sql: str) -> None:
+    """Refuse a date call in ``sql`` whose date SQLite would read as a day
+    number: a number, or numeric text, with no modifier saying what it is,
+    or the text of strftime(), time() or timediff()."""
+    tokens = [t for t in _DATE_ARGUMENT.finditer(sql) if not t.group(0).isspace()]
+    position = 0
+
+    def argument() -> tuple[str, str]:
+        nonlocal position
+        if position >= len(tokens):
+            return ("text", "")
+        token = tokens[position]
+        position += 1
+        if token.group(1):
+            return call(token.group(1).lower())
+        if token.group(0) == "(":
+            inner = argument()
+            while position < len(tokens) and tokens[position].group(0) != ")":
+                if tokens[position].group(0) == ",":
+                    position += 1
+                else:
+                    argument()
+            position += 1
+            return inner
+        text = token.group(0)
+        return ("text", text[1:-1].replace("''", "'")) if text[0] == "'" else ("number", text)
+
+    def call(name: str) -> tuple[str, str]:
+        nonlocal position
+        args: list[tuple[str, str]] = []
+        while position < len(tokens) and tokens[position].group(0) != ")":
+            if tokens[position].group(0) == ",":
+                position += 1
+                continue
+            args.append(argument())
+        position += 1
+        dates = args[1:2] if name == "strftime" else args[:2] if name == "timediff" else args[:1]
+        modifiers = {value.strip().lower() for kind, value in args[len(dates) + (name == "strftime"):]
+                     if kind == "text"}
+        for kind, value in dates:
+            if kind == "call" and value in _TEXT_ONLY_CALLS:
+                raise ValueError(f"{name}() cannot take the text of {value}(), which it may read as a day "
+                                 "number; give it a date written YYYY-MM-DD, or date() or datetime()")
+            if kind != "call" and _NUMBER_AS_DATE.fullmatch(value) and not modifiers & _NUMBER_MODIFIERS:
+                if not _DAY_NUMBERS[0] <= float(value) <= _DAY_NUMBERS[1]:
+                    raise ValueError(_NUMBER_AS_DATE_PROBLEM.format(repr(value.strip())))
+        return ("call", name)
+
+    while position < len(tokens):
+        argument()
+
+
 def _date_calls(expr: str) -> list[tuple[int, int, str, str]]:
     """The start, end, function and SQL of each outermost date call in
     ``expr``. What lies between the calls must read as arithmetic."""
@@ -378,10 +447,15 @@ def _date_calls(expr: str) -> list[tuple[int, int, str, str]]:
         word = _WORD.match(expr, i)
         opening = _OPENING.match(expr, word.end()) if word else None
         if word is None:
+            if expr[i] not in _ARITHMETIC:
+                # A character Python takes in a name but \w does not (℘)
+                # once slipped past this scan.
+                raise ValueError(f"{expr[i]!r} is neither a function nor a figure")
             i += 1
         elif opening and word.group(0).lower() in _DATE_FUNCTIONS:
             end, arguments = _date_call_end(expr, opening.end(), word.group(0))
             calls.append((i, end, word.group(0).lower(), f"{word.group(0)}({arguments}"))
+            _check_date_values(calls[-1][3])
             i = end
         elif opening is None and not word.group(0)[0].isdigit():
             # SQLite read "date('2030-03-31') - 180 days" as 2030 - 180, named
@@ -443,11 +517,15 @@ def _with_values(expr: str, calls: list[tuple[int, int, str, str]], values: list
 def _chosen_date_text(node: ast.AST, texts: list[Any]) -> str:
     """Date text in parentheses or picked with max() or min(), which compare
     YYYY-MM-DD text in date order, as SQLite does."""
-    if isinstance(node, ast.Name) and isinstance(texts[int(node.id[5:])], str):
-        return texts[int(node.id[5:])]
+    placed = _PLACEHOLDER.fullmatch(node.id) if isinstance(node, ast.Name) else None
+    if placed and int(placed.group(1)) < len(texts) and isinstance(texts[int(placed.group(1))], str):
+        return texts[int(placed.group(1))]
     if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id.lower() in ("max", "min")
             and node.args and not node.keywords):
         choices = [_chosen_date_text(arg, texts) for arg in node.args]
+        if not all(_ORDERED_DATE_TEXT.fullmatch(choice) for choice in choices):
+            raise ValueError(f"{node.func.id.lower()}() picks among dates written YYYY-MM-DD or times written "
+                             "HH:MM; compare other dates by subtracting julianday() values")
         return max(choices) if node.func.id.lower() == "max" else min(choices)
     raise ValueError(_DATE_TEXT_PROBLEM)
 
@@ -482,6 +560,8 @@ def _evaluate_dates(expr: str) -> str:
                                              for (_start, _end, name, _sql), value in zip(calls, values, strict=True)])
     except ValueError as exc:
         return f"ERROR: cannot evaluate {expr!r}: {exc}. {_DATE_HELP}"
+    # SQLite read ROUND, ABS and MAX in any case; the arithmetic reads them lowercase.
+    figures = re.sub(r"[A-Za-z_]\w*(?=\s*\()", lambda name: name.group(0).lower(), figures)
     args = _caret_as_power({"expr": _sums_as_additions(figures)})
     out = _run_isolated("evaluate", args) if _have_sympy() else _run_evaluate(args, exact=True)
     failed = f"ERROR: cannot evaluate {args['expr']!r}: "
