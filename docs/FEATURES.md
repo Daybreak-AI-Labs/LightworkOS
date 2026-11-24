@@ -12,7 +12,7 @@ catalogue of built features and tools.
 
 | Section | Entries |
 | --- | ---: |
-| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 225 |
+| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 226 |
 | [Tools](#tools) | 10 |
 | [Channels](#channels) | prose |
 | [Sandboxes](#sandboxes) | prose |
@@ -33,7 +33,7 @@ catalogue of built features and tools.
 | [Customer workflow completion and readiness](#customer-workflow-completion-and-readiness) | 22 in 24 subsections |
 | [In-house legal workspace](#in-house-legal-workspace) | prose |
 
-466 entries in 20 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
+467 entries in 20 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
 <!-- toc:end -->
 
 ## Agent kernel and orchestration
@@ -298,6 +298,14 @@ Settings and the installation wizard.
   exactly and reports it as `computed_value` with `value_status`
   "computed", apart from any stored cache; SQL over an Excel attachment sees
   the same values. Other formulas stay "uncalculated".
+- **SQL over CSV reads amounts and clock times** (`tools/csv_query.py`) —
+  the `read_attachment` and `spreadsheet_read` queries load "4,850.00",
+  "$1,089.99" and "($312.18)" as numbers (as text they summed as 4) and keep
+  "02134" as written. `hours(start, end)` gives the hours between two HH:MM
+  times, past midnight when the end is not after the start, and
+  `overlap(start, end, from, to)` the hours inside a daily window such as a
+  22:00-06:00 night premium. `compute` also adds `sum([a, b, c])`, and
+  `write_file` reports a document table whose total its rows do not add to.
 - **Web search on by default** (`config.get_capabilities`,
   `[capabilities] web_search`, off on an enterprise install) — agents can
   search for current facts without setup. With no search key Lightwork uses

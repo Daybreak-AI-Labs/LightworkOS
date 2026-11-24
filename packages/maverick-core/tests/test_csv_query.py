@@ -40,3 +40,20 @@ def test_text_that_only_looks_numeric_stays_as_written():
 def test_plain_numbers_read_as_before():
     text = "a,b,c,d,e\n1e3,+5,1.,-0.25,.5\n"
     assert _query(text, "SELECT a + b + c + d + e AS total FROM data") == ["total", "1006.25"]
+
+
+def test_clock_times_give_hours_across_midnight_and_inside_a_window():
+    # Live, twice: a night crew's pay was worked out by hand and both runs
+    # counted the wrong night hours (8 for a 21:00-05:00 shift, not 7).
+    text = ("employee,clock_in,clock_out,break_min\n"
+            "Marcus,22:00,06:30,30\nMarcus,21:00,05:00,30\nPriya,16:00,00:30,30\n"
+            "Tomas,23:30,07:45,45\nTomas,06:00,14:00,30\nAda,9:15,17:45,0\n")
+    rows = _query(text, "SELECT employee, hours(clock_in, clock_out) - break_min / 60.0 AS paid, "
+                        "overlap(clock_in, clock_out, '22:00', '06:00') AS night FROM data")
+    assert rows == ["employee,paid,night", "Marcus,8.0,8.0", "Marcus,7.5,7.0", "Priya,8.0,2.5",
+                    "Tomas,7.5,6.5", "Tomas,7.5,0.0", "Ada,8.5,0.0"]
+    assert _query(text, "SELECT SUM(overlap(clock_in, clock_out, '22:00', '06:00')) AS n FROM data") == [
+        "n", "24.0"]
+    # A value that is not a clock time gives NULL, not a guess.
+    assert _query("a,b\n25:00,x\n", "SELECT hours(a, b) AS h, overlap(a, b, '1:00', '2:00') AS o FROM data") == [
+        "h,o", ","]

@@ -787,7 +787,8 @@ def spreadsheet_read(sandbox=None) -> Tool:
                      "or Excel files exactly with op=query: one read-only SELECT over `paths`, "
                      "each file a table named after it (invoices.csv -> invoices; an Excel "
                      "file's first sheet). Use query for "
-                     "totals, duplicates and cross-file checks instead of comparing by eye. "
+                     "totals, duplicates and cross-file checks instead of comparing by eye; "
+                     "hours(start, end) and overlap(start, end, from, to) work out clock times. "
                      "Cannot write, edit or recalculate. Formula cells include cached values "
                      "and freshness status. Draft proposed changes in the response for a "
                      "human to apply."),
